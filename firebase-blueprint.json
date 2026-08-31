@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "rides": {
+      "title": "Ride",
+      "description": "Transport reservation and real-time status tracking record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "reservationId": { "type": "string" },
+        "passengerName": { "type": "string" },
+        "passengerEmail": { "type": "string" },
+        "passengerPhone": { "type": "string" },
+        "additionalPassengerEmails": { "type": "array", "items": { "type": "string" } },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "currentStatus": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "tokens": { "type": "object" },
+        "events": { "type": "array" }
+      },
+      "required": ["id", "reservationId", "passengerName", "passengerEmail", "currentStatus", "createdAt"]
+    },
+    "drivers": {
+      "title": "Driver",
+      "description": "Registered driver record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "vehicle": { "type": "string" },
+        "licensePlate": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "createdAt"]
+    },
+    "tokens": {
+      "title": "Token Mapping",
+      "description": "Permanent tracking token mapping to rideId",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "rideId": { "type": "string" },
+        "type": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "rideId", "type", "createdAt"]
+    },
+    "settings": {
+      "title": "Settings",
+      "description": "Branding and admin settings",
+      "type": "object"
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  }
+}

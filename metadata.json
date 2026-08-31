@@ -1,0 +1,6 @@
+{
+  "name": "Ride Tracking System",
+  "description": "Professional ride tracking and status timestamp management application with driver, passenger, and admin links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
