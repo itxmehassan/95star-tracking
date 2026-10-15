@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, Upload, Image as ImageIcon, Trash2, CheckCircle2, 
-  RotateCcw, Sparkles, Smartphone, FileText, AlertCircle, RefreshCw
+  RotateCcw, Sparkles, Smartphone, FileText, AlertCircle, RefreshCw, Clock
 } from 'lucide-react';
 import { useBranding } from '../../lib/BrandingContext';
 import { NinetyFiveStarShield, CompanyLogoIcon } from '../common/Logo';
+import { US_TIME_ZONES } from '../../lib/timezone';
 
 interface CompanyLogoModalProps {
   isOpen: boolean;
@@ -16,8 +17,10 @@ export default function CompanyLogoModal({ isOpen, onClose }: CompanyLogoModalPr
     companyName, 
     tagline, 
     logoUrl, 
+    timeZone,
     isCustomLogo, 
     updateBranding, 
+    setTimeZone,
     resetLogo, 
     isLoading 
   } = useBranding();
@@ -25,6 +28,7 @@ export default function CompanyLogoModal({ isOpen, onClose }: CompanyLogoModalPr
   const [customName, setCustomName] = useState(companyName);
   const [customTagline, setCustomTagline] = useState(tagline);
   const [selectedImage, setSelectedImage] = useState<string | null>(logoUrl);
+  const [selectedTimeZone, setSelectedTimeZone] = useState(timeZone || 'America/New_York');
   const [previewTab, setPreviewTab] = useState<'navbar' | 'driver' | 'passenger' | 'pdf'>('navbar');
   const [dragActive, setDragActive] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -38,10 +42,11 @@ export default function CompanyLogoModal({ isOpen, onClose }: CompanyLogoModalPr
       setCustomName(companyName);
       setCustomTagline(tagline);
       setSelectedImage(logoUrl);
+      setSelectedTimeZone(timeZone || 'America/New_York');
       setSaveSuccess(false);
       setErrorMessage(null);
     }
-  }, [isOpen, companyName, tagline, logoUrl]);
+  }, [isOpen, companyName, tagline, logoUrl, timeZone]);
 
   if (!isOpen) return null;
 
@@ -141,7 +146,8 @@ export default function CompanyLogoModal({ isOpen, onClose }: CompanyLogoModalPr
     const success = await updateBranding({
       companyName: customName.trim() || '95 Star Tracking',
       tagline: customTagline.trim() || 'Airport Sedan Service',
-      logoUrl: selectedImage
+      logoUrl: selectedImage,
+      timeZone: selectedTimeZone
     });
 
     if (success) {
@@ -326,6 +332,30 @@ export default function CompanyLogoModal({ isOpen, onClose }: CompanyLogoModalPr
                 className="w-full px-3.5 py-2.5 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-slate-900 focus:border-transparent transition"
               />
             </div>
+          </div>
+
+          {/* American Timezone Configuration */}
+          <div className="p-4 bg-blue-50/50 border border-blue-200/80 rounded-2xl">
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="w-4 h-4 text-blue-700" />
+              <label className="block text-xs font-bold text-blue-950 uppercase tracking-wider">
+                Fleet Operating Timezone (American Time)
+              </label>
+            </div>
+            <p className="text-xs text-blue-800 mb-3">
+              All ride timestamps, dashboard filters, PDF audit reports, and tracking views display in this American timezone.
+            </p>
+            <select
+              value={selectedTimeZone}
+              onChange={(e) => setSelectedTimeZone(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-blue-600 focus:border-transparent transition cursor-pointer"
+            >
+              {US_TIME_ZONES.map(tz => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label} ({tz.value})
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Live Multi-View Previews */}

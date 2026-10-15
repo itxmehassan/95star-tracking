@@ -121,6 +121,7 @@ export interface CompanyBranding {
   companyName: string;
   tagline?: string;
   logoUrl?: string | null;
+  timeZone?: string;
   updatedAt?: string;
 }
 
@@ -135,6 +136,7 @@ class RideDatabase {
     companyName: '95 Star Tracking',
     tagline: 'Airport Sedan Service',
     logoUrl: null,
+    timeZone: process.env.APP_TIMEZONE || 'America/New_York',
     updatedAt: new Date().toISOString()
   };
   
@@ -173,9 +175,13 @@ class RideDatabase {
     try {
       const fsDb = getFirestoreServer();
       if (!fsDb) {
-        console.warn('[Database] Firestore configuration not found or disabled. Using disk storage.');
+        if (process.env.DISABLE_FIRESTORE === 'true' || process.env.NO_FIREBASE === 'true') {
+          console.log('[Database] Firestore disabled via environment. Running standalone disk storage.');
+        } else {
+          console.warn('[Database] Firestore configuration not found or disabled. Using disk storage.');
+        }
         this.isSyncing = false;
-        return { success: false, ridesCount: this.rides.size, driversCount: this.drivers.size, error: 'Firestore client not initialized' };
+        return { success: true, ridesCount: this.rides.size, driversCount: this.drivers.size };
       }
 
       console.log('[Database] Connecting Firestore database sync...');
@@ -191,6 +197,7 @@ class RideDatabase {
               companyName: brandData.companyName || this.branding.companyName,
               tagline: brandData.tagline || this.branding.tagline,
               logoUrl: brandData.logoUrl || this.branding.logoUrl,
+              timeZone: brandData.timeZone || this.branding.timeZone || 'America/New_York',
               updatedAt: brandData.updatedAt || new Date().toISOString()
             };
             console.log(`[Database] Synced company branding from Firestore (Company: ${this.branding.companyName}, Logo: ${Boolean(this.branding.logoUrl)})`);
@@ -486,6 +493,7 @@ class RideDatabase {
             companyName: parsed.branding.companyName || '95 Star Tracking',
             tagline: parsed.branding.tagline || 'Airport Sedan Service',
             logoUrl: parsed.branding.logoUrl || null,
+            timeZone: parsed.branding.timeZone || process.env.APP_TIMEZONE || 'America/New_York',
             updatedAt: parsed.branding.updatedAt || new Date().toISOString()
           };
         }
@@ -1165,6 +1173,7 @@ class RideDatabase {
       companyName: updates.companyName ? updates.companyName.trim() : this.branding.companyName,
       tagline: updates.tagline !== undefined ? updates.tagline.trim() : this.branding.tagline,
       logoUrl: updates.logoUrl !== undefined ? updates.logoUrl : this.branding.logoUrl,
+      timeZone: updates.timeZone !== undefined ? updates.timeZone : this.branding.timeZone,
       updatedAt: new Date().toISOString()
     };
     this.persistToDisk();

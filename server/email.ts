@@ -27,18 +27,20 @@ export interface EmailDispatchResult {
 }
 
 /**
- * Format human friendly date time string
+ * Format human friendly date time string in American timezone
  */
-function formatEmailDate(isoString: string): string {
+function formatEmailDate(isoString: string, timeZone: string = process.env.APP_TIMEZONE || 'America/New_York'): string {
   try {
     const d = new Date(isoString);
     return d.toLocaleString('en-US', {
+      timeZone,
       month: 'short',
       day: 'numeric',
       year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: true,
+      timeZoneName: 'short'
     });
   } catch {
     return isoString;

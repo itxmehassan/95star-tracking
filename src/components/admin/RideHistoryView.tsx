@@ -13,6 +13,11 @@ import {
   downloadBulkCsv, 
   downloadSingleRideCsv 
 } from '../../lib/pdf';
+import { 
+  isAmericanDateToday, 
+  isAmericanDateYesterday, 
+  isAmericanDateTomorrow 
+} from '../../lib/timezone';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 interface RideHistoryViewProps {
@@ -52,31 +57,17 @@ export default function RideHistoryView({
     }
   }, [initialFilter]);
 
-  // Helper date matchers
+  // Helper date matchers (American Timezone Aware)
   const isDateToday = (isoString: string) => {
-    const d = new Date(isoString);
-    const now = new Date();
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth() === now.getMonth() &&
-           d.getDate() === now.getDate();
+    return isAmericanDateToday(isoString);
   };
 
   const isDateYesterday = (isoString: string) => {
-    const d = new Date(isoString);
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    return d.getFullYear() === yesterday.getFullYear() &&
-           d.getMonth() === yesterday.getMonth() &&
-           d.getDate() === yesterday.getDate();
+    return isAmericanDateYesterday(isoString);
   };
 
   const isDateTomorrow = (isoString: string) => {
-    const d = new Date(isoString);
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return d.getFullYear() === tomorrow.getFullYear() &&
-           d.getMonth() === tomorrow.getMonth() &&
-           d.getDate() === tomorrow.getDate();
+    return isAmericanDateTomorrow(isoString);
   };
 
   // Filtered List

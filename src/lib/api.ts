@@ -1,20 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Driver, Ride } from '../types';
+import { formatAmericanTime } from './timezone';
 
 const AUTH_TOKEN_KEY = 'ride_track_admin_session';
 
 export function formatStepTime(isoString?: string): string {
-  if (!isoString) return '';
-  try {
-    const d = new Date(isoString);
-    return d.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  } catch {
-    return '';
-  }
+  return formatAmericanTime(isoString, { includeTzAbbr: true });
 }
 
 export function getAdminToken(): string | null {
@@ -29,6 +20,14 @@ export function clearAdminToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+export function getApiBaseUrl(): string {
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+  return '';
+}
+
 export async function apiFetch<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getAdminToken();
   const headers: Record<string, string> = {
@@ -40,7 +39,12 @@ export async function apiFetch<T = any>(endpoint: string, options: RequestInit =
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(endpoint, {
+  const baseUrl = getApiBaseUrl();
+  const fullUrl = endpoint.startsWith('http://') || endpoint.startsWith('https://')
+    ? endpoint
+    : `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+
+  const res = await fetch(fullUrl, {
     ...options,
     headers
   });
@@ -120,7 +124,8 @@ export function useRealtimeRideStream(options?: { rideId?: string; token?: strin
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'disconnected'>('connected');
 
   useEffect(() => {
-    let url = '/api/realtime/stream';
+    const baseUrl = getApiBaseUrl();
+    let url = `${baseUrl}/api/realtime/stream`;
     const params = new URLSearchParams();
     if (options?.rideId) params.append('rideId', options.rideId);
     if (options?.token) params.append('token', options.token);

@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import crypto from 'crypto';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { db, STATUS_SEQUENCE, STATUS_LABELS, RideStatus } from './server/db';
 import { realtime } from './server/realtime';
@@ -20,10 +21,25 @@ function getBaseUrl(req: Request): string {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  app.enable('trust proxy');
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   app.use(express.json({ limit: '15mb' }));
   app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+  // CORS Middleware (supports cross-origin frontend from Vercel / Netlify)
+  app.use((req: Request, res: Response, next: Function) => {
+    const origin = req.headers.origin || '*';
+    const allowed = process.env.ALLOWED_ORIGIN || '*';
+    res.header('Access-Control-Allow-Origin', allowed === '*' ? '*' : origin);
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   // Initialize Firestore synchronization before serving requests
   try {
@@ -328,11 +344,12 @@ async function startServer() {
 
   app.post('/api/branding', requireAdminAuth, async (req: Request, res: Response) => {
     try {
-      const { companyName, tagline, logoUrl } = req.body;
+      const { companyName, tagline, logoUrl, timeZone } = req.body;
       const updated = await db.updateBranding({
         companyName: companyName ? String(companyName) : undefined,
         tagline: tagline !== undefined ? String(tagline) : undefined,
-        logoUrl: logoUrl !== undefined ? (logoUrl ? String(logoUrl) : null) : undefined
+        logoUrl: logoUrl !== undefined ? (logoUrl ? String(logoUrl) : null) : undefined,
+        timeZone: timeZone ? String(timeZone) : undefined
       });
 
       realtime.broadcastBrandingUpdate(updated);
@@ -704,22 +721,24 @@ async function startServer() {
   // ==========================================
   // VITE MIDDLEWARE & SPA SERVING
   // ==========================================
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (process.env.NODE_ENV === 'production' || (hasDist && process.env.NODE_ENV !== 'development')) {
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Ride Tracking System running on http://localhost:${PORT}`);
+    console.log(`Ride Tracking System running on port ${PORT}`);
   });
 }
 

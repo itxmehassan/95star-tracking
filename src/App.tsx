@@ -171,19 +171,22 @@ export default function App() {
   // Route Dispatcher
   // 1. Driver View Route: /driver/:token
   if (currentPath.startsWith('/driver/')) {
-    const token = currentPath.replace('/driver/', '').trim();
+    const rawToken = currentPath.replace('/driver/', '');
+    const token = rawToken.split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
     return <DriverView token={token} />;
   }
 
   // 2. Passenger View Route: /passenger/:token
   if (currentPath.startsWith('/passenger/')) {
-    const token = currentPath.replace('/passenger/', '').trim();
+    const rawToken = currentPath.replace('/passenger/', '');
+    const token = rawToken.split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
     return <PassengerView token={token} />;
   }
 
   // 3. Admin Tracking Route: /track/:token or /admin-track/:token
   if (currentPath.startsWith('/track/') || currentPath.startsWith('/admin-track/')) {
-    const token = currentPath.replace(/\/track\/|\/admin-track\//, '').trim();
+    const rawToken = currentPath.replace(/\/track\/|\/admin-track\//, '');
+    const token = rawToken.split('?')[0].split('#')[0].replace(/\/+$/, '').trim();
     return <AdminTrackView token={token} />;
   }
 

@@ -29,6 +29,12 @@ interface FirebaseConfigFile {
 }
 
 export function getFirestoreServer(): Firestore | null {
+  if (process.env.DISABLE_FIRESTORE === 'true' || process.env.NO_FIREBASE === 'true') {
+    firestoreInstance = null;
+    isInitialized = true;
+    return null;
+  }
+
   if (isInitialized) {
     return firestoreInstance;
   }

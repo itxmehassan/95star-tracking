@@ -6,6 +6,7 @@ import {
 import { clearAdminToken } from '../../lib/api';
 import { CompanyLogoIcon } from '../common/Logo';
 import { useBranding } from '../../lib/BrandingContext';
+import TimezoneSelector from '../common/TimezoneSelector';
 
 interface NavbarProps {
   activeTab: 'dashboard' | 'tracking' | 'history';
@@ -145,6 +146,9 @@ export default function Navbar({
                 </button>
               )}
             </div>
+
+            {/* American Timezone Selector */}
+            <TimezoneSelector variant="compact" />
 
             {/* Connection Status indicator */}
             <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-[11px] font-medium text-slate-600">
@@ -342,6 +346,13 @@ export default function Navbar({
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>
             )}
+
+            <div className="px-3 py-2 bg-slate-50 rounded-xl">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                American Timezone
+              </span>
+              <TimezoneSelector variant="full" />
+            </div>
 
             <div className="pt-2 border-t border-slate-100 mt-2">
               <button

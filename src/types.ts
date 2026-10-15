@@ -159,5 +159,6 @@ export interface CompanyBranding {
   companyName: string;
   tagline?: string;
   logoUrl?: string | null;
+  timeZone?: string;
   updatedAt?: string;
 }

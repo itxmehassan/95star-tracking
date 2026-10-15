@@ -7,6 +7,65 @@
     <meta name="description" content="Professional ride tracking and status timestamp management application with driver, passenger, and admin links." />
     <meta property="og:title" content="Ride Tracking System" />
     <meta property="og:description" content="Professional ride tracking and status timestamp management application with driver, passenger, and admin links." />
+    <script>
+      (function() {
+        // 1. Ensure window.fetch is writable and configurable so extensions/scripts that assign window.fetch
+        // do not throw "TypeError: Cannot set property fetch of #<Window> which has only a getter"
+        try {
+          var _origFetch = typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : null;
+          var _activeFetch = _origFetch;
+          if (typeof window !== 'undefined' && Object.defineProperty) {
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function() {
+                return _activeFetch || _origFetch;
+              },
+              set: function(fn) {
+                _activeFetch = typeof fn === 'function' ? fn : _origFetch;
+              }
+            });
+          }
+        } catch (e) {}
+
+        // 2. Intercept and swallow unhandled extension errors so they don't break page execution or trigger error overlays
+        if (typeof window !== 'undefined') {
+          window.addEventListener('error', function(event) {
+            try {
+              var src = (event && (event.filename || (event.error && event.error.stack) || '')) || '';
+              var msg = (event && event.message) || '';
+              if (
+                src.indexOf('chrome-extension://') !== -1 ||
+                src.indexOf('moz-extension://') !== -1 ||
+                src.indexOf('safari-extension://') !== -1 ||
+                (msg.indexOf('fetch') !== -1 && msg.indexOf('getter') !== -1)
+              ) {
+                event.preventDefault();
+                if (typeof event.stopImmediatePropagation === 'function') {
+                  event.stopImmediatePropagation();
+                }
+                return true;
+              }
+            } catch (err) {}
+          }, true);
+
+          window.addEventListener('unhandledrejection', function(event) {
+            try {
+              var reason = event && event.reason;
+              var str = (reason && (reason.stack || reason.message || String(reason))) || '';
+              if (
+                str.indexOf('chrome-extension://') !== -1 ||
+                str.indexOf('moz-extension://') !== -1 ||
+                (str.indexOf('fetch') !== -1 && str.indexOf('getter') !== -1)
+              ) {
+                event.preventDefault();
+                return true;
+              }
+            } catch (err) {}
+          }, true);
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">

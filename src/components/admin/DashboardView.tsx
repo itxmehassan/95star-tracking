@@ -13,6 +13,7 @@ import {
   downloadBulkZip, 
   downloadBulkCsv 
 } from '../../lib/pdf';
+import { isAmericanDateToday } from '../../lib/timezone';
 import ConfirmDeleteModal from './ConfirmDeleteModal';
 
 interface DashboardViewProps {
@@ -56,11 +57,7 @@ export default function DashboardView({
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 
   const isDateToday = (isoString: string) => {
-    const d = new Date(isoString);
-    const now = new Date();
-    return d.getFullYear() === now.getFullYear() &&
-           d.getMonth() === now.getMonth() &&
-           d.getDate() === now.getDate();
+    return isAmericanDateToday(isoString);
   };
 
   const filteredRides = useMemo(() => {

@@ -1,11 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { CompanyBranding } from '../types';
 import { apiFetch } from './api';
+import { getActiveTimeZone, setActiveTimeZone } from './timezone';
 
 const DEFAULT_BRANDING: CompanyBranding = {
   companyName: '95 Star Tracking',
   tagline: 'Airport Sedan Service',
-  logoUrl: null
+  logoUrl: null,
+  timeZone: 'America/New_York'
 };
 
 interface BrandingContextValue {
@@ -13,9 +15,11 @@ interface BrandingContextValue {
   companyName: string;
   tagline: string;
   logoUrl: string | null;
+  timeZone: string;
   isCustomLogo: boolean;
   isLoading: boolean;
   updateBranding: (updates: Partial<CompanyBranding>) => Promise<boolean>;
+  setTimeZone: (tz: string) => Promise<boolean>;
   uploadLogo: (base64DataUrl: string) => Promise<boolean>;
   resetLogo: () => Promise<boolean>;
   refreshBranding: () => Promise<void>;
@@ -39,6 +43,9 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
 
   const persistCache = (data: CompanyBranding) => {
     setBranding(data);
+    if (data.timeZone) {
+      setActiveTimeZone(data.timeZone);
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {}
@@ -113,6 +120,11 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     return updateBranding({ logoUrl: base64DataUrl });
   };
 
+  const setTimeZone = async (tz: string): Promise<boolean> => {
+    setActiveTimeZone(tz);
+    return updateBranding({ timeZone: tz });
+  };
+
   const resetLogo = async (): Promise<boolean> => {
     setIsLoading(true);
     try {
@@ -133,6 +145,8 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const activeTz = branding.timeZone || getActiveTimeZone();
+
   return (
     <BrandingContext.Provider
       value={{
@@ -140,9 +154,11 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
         companyName: branding.companyName || '95 Star Tracking',
         tagline: branding.tagline || 'Airport Sedan Service',
         logoUrl: branding.logoUrl || null,
+        timeZone: activeTz,
         isCustomLogo: Boolean(branding.logoUrl),
         isLoading,
         updateBranding,
+        setTimeZone,
         uploadLogo,
         resetLogo,
         refreshBranding
@@ -162,9 +178,11 @@ export function useBranding() {
       companyName: DEFAULT_BRANDING.companyName,
       tagline: DEFAULT_BRANDING.tagline || '',
       logoUrl: null,
+      timeZone: getActiveTimeZone(),
       isCustomLogo: false,
       isLoading: false,
       updateBranding: async () => false,
+      setTimeZone: async () => false,
       uploadLogo: async () => false,
       resetLogo: async () => false,
       refreshBranding: async () => {}

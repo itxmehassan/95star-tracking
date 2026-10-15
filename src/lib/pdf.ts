@@ -3,38 +3,14 @@ import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
 import { Ride, STATUS_LABELS } from '../types';
 import { getLogoDataUrl, getBrandInfo } from './logoData';
+import { formatAmericanDateTime, formatAmericanTime } from './timezone';
 
 export function formatDateTime(isoString?: string): string {
-  if (!isoString) return '—';
-  try {
-    const d = new Date(isoString);
-    return d.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    });
-  } catch {
-    return isoString;
-  }
+  return formatAmericanDateTime(isoString, { includeSeconds: true });
 }
 
 export function formatTimeOnly(isoString?: string): string {
-  if (!isoString) return '—';
-  try {
-    const d = new Date(isoString);
-    return d.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    });
-  } catch {
-    return isoString;
-  }
+  return formatAmericanTime(isoString, { includeTzAbbr: true });
 }
 
 export function formatDuration(seconds?: number): string {
