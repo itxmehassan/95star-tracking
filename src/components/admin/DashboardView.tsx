@@ -61,7 +61,7 @@ export default function DashboardView({
   };
 
   const filteredRides = useMemo(() => {
-    return rides.filter((ride) => {
+    const list = rides.filter((ride) => {
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
         const matchRes = ride.reservationId.toLowerCase().includes(q);
@@ -81,6 +81,9 @@ export default function DashboardView({
 
       return true;
     });
+
+    // Guarantee that the latest created rides always appear at position 0
+    return list.sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0));
   }, [rides, searchTerm, tableFilter]);
 
   const displayedRides = showAllRows ? filteredRides : filteredRides.slice(0, 10);

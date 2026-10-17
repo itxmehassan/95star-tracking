@@ -19,6 +19,13 @@ function getBaseUrl(req: Request): string {
   return `${protocol}://${host}`;
 }
 
+process.on('uncaughtException', (err) => {
+  console.error('[Process Guard] Caught unhandled exception (prevented server crash):', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process Guard] Caught unhandled rejection (prevented server crash):', reason);
+});
+
 async function startServer() {
   const app = express();
   app.enable('trust proxy');
@@ -41,13 +48,43 @@ async function startServer() {
     next();
   });
 
-  // Initialize Firestore synchronization before serving requests
+  // Explicit Anti-Caching Headers for all /api endpoints to prevent stale data
+  app.use('/api', (_req: Request, res: Response, next: Function) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  });
+
+  // Initialize Database Synchronization (Supabase PostgreSQL / Cloud Firestore / Disk Mirror)
+  if (process.env.SUPABASE_URL || process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    if (!process.env.SUPABASE_URL) {
+      console.error('[Server Boot Error] SUPABASE_SERVICE_ROLE_KEY is set, but SUPABASE_URL is missing!');
+    } else if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error('[Server Boot Error] SUPABASE_URL is set, but SUPABASE_SERVICE_ROLE_KEY is missing!');
+    }
+  }
+
   try {
-    console.log('[Server Boot] Hydrating database from Cloud Firestore...');
-    const syncStatus = await db.initCloudFirestoreSync();
-    console.log(`[Server Boot] Firestore sync ready: ${syncStatus.ridesCount} rides, ${syncStatus.driversCount} drivers available.`);
+    console.log('[Server Boot] Hydrating database from Supabase PostgreSQL...');
+    const spStatus = await db.initSupabaseSync();
+    if (spStatus.success) {
+      console.log(`[Server Boot] Supabase PostgreSQL sync active: ${spStatus.ridesCount} rides, ${spStatus.driversCount} drivers ready.`);
+    } else {
+      console.log(`[Server Boot] Supabase note (${spStatus.error || 'not configured'}). Continuing with persistent mirror.`);
+    }
+  } catch (spErr: any) {
+    console.warn('[Server Boot] Supabase initialization warning:', spErr.message);
+  }
+
+  try {
+    if (process.env.DISABLE_FIRESTORE !== 'true') {
+      console.log('[Server Boot] Checking Cloud Firestore synchronization...');
+      const syncStatus = await db.initCloudFirestoreSync();
+      console.log(`[Server Boot] Firestore sync ready: ${syncStatus.ridesCount} rides, ${syncStatus.driversCount} drivers available.`);
+    }
   } catch (syncErr) {
-    console.warn('[Server Boot] Initial Firestore sync warning (continuing with local mirror):', syncErr);
+    console.warn('[Server Boot] Firestore sync warning (continuing with local mirror):', syncErr);
   }
 
   // Middleware for Admin Session Validation
@@ -464,6 +501,7 @@ async function startServer() {
     };
 
     const rides = db.getRides({ search, status, fromDate, toDate });
+    console.log(`[Ride-Diagnostics][Backend] GET /api/rides called. Returning ${rides.length} rides.`);
     res.json(rides);
   });
 
@@ -485,6 +523,8 @@ async function startServer() {
         });
       }
 
+      console.log(`[Ride-Diagnostics][Backend] POST /api/rides creating ride: #${reservationId} for ${passengerName}`);
+
       // Create permanent ride in database with atomic persistence
       const newRide = await db.createRide({
         reservationId: String(reservationId).trim(),
@@ -501,6 +541,8 @@ async function startServer() {
       if (!verified) {
         throw new Error('Database persistence failure: Ride could not be verified in database.');
       }
+
+      console.log(`[Ride-Diagnostics][Backend] Ride created and verified in database: ID=${verified.id}, #${verified.reservationId}, total rides now=${db.getRides().length}`);
 
       realtime.broadcastNewRide(verified);
 

@@ -13,6 +13,7 @@ import {
   verifyFirestoreConnection,
   getFirestoreConfig
 } from './firestore';
+import { getSupabaseClient, isSupabaseConfigured, verifySupabaseConnection } from './supabase';
 
 export type RideStatus = 
   | 'created'
@@ -145,6 +146,7 @@ class RideDatabase {
   private dbBackupFilePath = path.join(process.cwd(), 'data', 'rides_db.backup.json');
   private isSyncing = false;
   private lastFirestoreSync: string | null = null;
+  private lastSupabaseSync: string | null = null;
 
   constructor() {
     this.ensureDataDirectory();
@@ -385,6 +387,147 @@ class RideDatabase {
   }
 
   /**
+   * Helper to write a ride to Supabase with error catching
+   */
+  public async syncRideToSupabase(ride: Ride): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      // If ride has an assigned driver, make sure that driver is synced to Supabase first
+      if (ride.driverId) {
+        const driver = this.drivers.get(ride.driverId);
+        if (driver) {
+          await this.syncDriverToSupabase(driver);
+        }
+      }
+
+      const row: Record<string, any> = {
+        id: ride.id,
+        reservation_id: ride.reservationId,
+        passenger_name: ride.passengerName,
+        passenger_email: ride.passengerEmail,
+        additional_passenger_emails: ride.additionalPassengerEmails || [],
+        driver_id: ride.driverId || null,
+        driver_name: ride.driverName || null,
+        driver_phone: ride.driverPhone || null,
+        current_status: ride.currentStatus,
+        created_at: ride.createdAt,
+        completed_at: ride.completedAt || null,
+        updated_at: ride.updatedAt || new Date().toISOString(),
+        tokens: ride.tokens || {},
+        last_email_dispatched_at: ride.lastEmailDispatchedAt || null,
+        last_assigned_driver_id_for_email: ride.lastAssignedDriverIdForEmail || null,
+        email_dispatch_status: ride.emailDispatchStatus || null
+      };
+
+      let { error } = await supabase.from('rides').upsert(row, { onConflict: 'id' });
+
+      // If error is foreign key violation on driver_id:
+      if (error && (error.message.includes('rides_driver_id_fkey') || error.message.includes('violates foreign key constraint'))) {
+        console.warn(`[Ride-Diagnostics][Database] Supabase driver foreign key violation for driver ${ride.driverId}. Retrying with driver_id null while keeping driver_name.`);
+        row.driver_id = null;
+        const retryResult = await supabase.from('rides').upsert(row, { onConflict: 'id' });
+        if (retryResult.error) {
+          console.error(`[Database] Error saving ride ${ride.id} to Supabase driver-fallback:`, retryResult.error.message);
+          return false;
+        }
+        return true;
+      }
+
+      if (error) {
+        console.error(`[Database] Error saving ride ${ride.id} to Supabase:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error(`[Database] Exception saving ride ${ride.id} to Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to delete a ride from Supabase
+   */
+  public async deleteRideFromSupabase(rideId: string): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+      const { error } = await supabase.from('rides').delete().eq('id', rideId);
+      if (error) {
+        console.error(`[Database] Error deleting ride ${rideId} from Supabase:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error(`[Database] Exception deleting ride ${rideId} from Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync a driver to Supabase
+   */
+  public async syncDriverToSupabase(driver: Driver): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      const row = {
+        id: driver.id,
+        name: driver.name,
+        phone: driver.phone || null,
+        email: driver.email || null,
+        vehicle: driver.vehicle || null,
+        license_plate: driver.licensePlate || null,
+        active: driver.active,
+        created_at: driver.createdAt
+      };
+
+      // Try 'drivers' first (primary table in Supabase)
+      let { error } = await supabase.from('drivers').upsert(row, { onConflict: 'id' });
+      if (error && error.message.includes('Could not find the table')) {
+        const fallback = await supabase.from('fleet_drivers').upsert(row, { onConflict: 'id' });
+        error = fallback.error;
+      }
+
+      if (error) {
+        console.error(`[Database] Error saving driver ${driver.id} to Supabase:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error(`[Database] Exception saving driver ${driver.id} to Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to delete a driver from Supabase
+   */
+  public async deleteDriverFromSupabase(driverId: string): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      let { error } = await supabase.from('drivers').delete().eq('id', driverId);
+      if (error && error.message.includes('Could not find the table')) {
+        const fallback = await supabase.from('fleet_drivers').delete().eq('id', driverId);
+        error = fallback.error;
+      }
+
+      if (error) {
+        console.error(`[Database] Error deleting driver ${driverId} from Supabase:`, error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error(`[Database] Exception deleting driver ${driverId} from Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
    * Helper to sync branding to Firestore
    */
   public async syncBrandingToFirestore(branding: CompanyBranding): Promise<boolean> {
@@ -414,6 +557,291 @@ class RideDatabase {
     } catch (err) {
       console.error('[Database] Error saving admin emails to Firestore:', err);
       return false;
+    }
+  }
+
+  /**
+   * Helper to sync branding to Supabase
+   */
+  public async syncBrandingToSupabase(branding: CompanyBranding): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      // Try company_branding table first
+      let { error } = await supabase
+        .from('company_branding')
+        .upsert({
+          id: 'default_branding',
+          company_name: branding.companyName,
+          tagline: branding.tagline || null,
+          logo_url: branding.logoUrl || null,
+          updated_at: branding.updatedAt || new Date().toISOString()
+        }, { onConflict: 'id' });
+
+      if (error && error.message.includes('Could not find the table')) {
+        const fallback = await supabase
+          .from('system_settings')
+          .upsert({
+            key: 'branding',
+            value: branding,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'key' });
+        error = fallback.error;
+      }
+
+      if (error) {
+        console.error('[Database] Error saving branding to Supabase:', error.message);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('[Database] Exception saving branding to Supabase:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync admin emails to Supabase
+   */
+  public async syncAdminEmailsToSupabase(emails: string[]): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      // If admin_emails table exists, sync the primary email
+      if (emails.length > 0) {
+        await supabase
+          .from('admin_emails')
+          .upsert({
+            email: emails[0],
+            is_primary: true
+          }, { onConflict: 'email' });
+      }
+
+      // Also try system_settings for array storage
+      await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'admin_emails',
+          value: { emails },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+
+      return true;
+    } catch (err) {
+      console.error('[Database] Exception saving admin emails to Supabase:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Initializes real-time synchronization with Supabase PostgreSQL.
+   * If tables are empty, seeds with existing 193 rides.
+   * If tables contain records, pulls them as authoritative source of truth.
+   */
+  public async initSupabaseSync(): Promise<{ success: boolean; ridesCount: number; driversCount: number; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      return { success: false, ridesCount: this.rides.size, driversCount: this.drivers.size, error: 'SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY not configured' };
+    }
+
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        return { success: false, ridesCount: this.rides.size, driversCount: this.drivers.size, error: 'Failed to create Supabase client' };
+      }
+
+      console.log('[Database] Connecting Supabase PostgreSQL sync...');
+
+      // 1. Fetch Branding
+      try {
+        const { data: brandData, error: brandErr } = await supabase
+          .from('company_branding')
+          .select('*')
+          .limit(1)
+          .single();
+
+        if (!brandErr && brandData) {
+          this.branding = {
+            companyName: brandData.company_name || this.branding.companyName,
+            tagline: brandData.tagline || this.branding.tagline,
+            logoUrl: brandData.logo_url || this.branding.logoUrl,
+            timeZone: this.branding.timeZone || 'America/New_York',
+            updatedAt: brandData.updated_at || new Date().toISOString()
+          };
+          console.log(`[Database] Synced company branding from Supabase (${this.branding.companyName})`);
+        } else {
+          // Fallback to system_settings
+          const { data: sysBrand } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', 'branding')
+            .single();
+          if (sysBrand?.value) {
+            const b = sysBrand.value as CompanyBranding;
+            this.branding = {
+              companyName: b.companyName || this.branding.companyName,
+              tagline: b.tagline || this.branding.tagline,
+              logoUrl: b.logoUrl || this.branding.logoUrl,
+              timeZone: b.timeZone || this.branding.timeZone || 'America/New_York',
+              updatedAt: b.updatedAt || new Date().toISOString()
+            };
+          } else if (this.branding.companyName) {
+            await this.syncBrandingToSupabase(this.branding);
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase branding fetch note:', err);
+      }
+
+      // 2. Fetch Admin Emails
+      try {
+        const { data: emailRows, error: emailErr } = await supabase
+          .from('admin_emails')
+          .select('email');
+
+        if (!emailErr && Array.isArray(emailRows) && emailRows.length > 0) {
+          this.adminEmails = emailRows.map(r => r.email).filter(Boolean);
+          console.log(`[Database] Synced ${this.adminEmails.length} admin notification emails from Supabase.`);
+        } else {
+          const { data: emailData } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', 'admin_emails')
+            .single();
+
+          if (Array.isArray(emailData?.value?.emails) && emailData.value.emails.length > 0) {
+            this.adminEmails = emailData.value.emails;
+          } else if (this.adminEmails.length > 0) {
+            await this.syncAdminEmailsToSupabase(this.adminEmails);
+          }
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase admin emails fetch note:', err);
+      }
+
+      // 3. Fetch Fleet Drivers (try 'drivers' table first, fallback to 'fleet_drivers')
+      try {
+        let driversData: any[] | null = null;
+        const resDrivers = await supabase.from('drivers').select('*');
+        if (!resDrivers.error && Array.isArray(resDrivers.data)) {
+          driversData = resDrivers.data;
+        } else {
+          const resFleet = await supabase.from('fleet_drivers').select('*');
+          if (!resFleet.error && Array.isArray(resFleet.data)) {
+            driversData = resFleet.data;
+          }
+        }
+
+        if (Array.isArray(driversData) && driversData.length > 0) {
+          for (const row of driversData) {
+            const d: Driver = {
+              id: row.id,
+              name: row.name,
+              phone: row.phone || undefined,
+              email: row.email || undefined,
+              vehicle: row.vehicle || undefined,
+              licensePlate: row.license_plate || undefined,
+              active: row.active !== undefined ? row.active : true,
+              createdAt: row.created_at || new Date().toISOString()
+            };
+            this.drivers.set(d.id, d);
+          }
+          console.log(`[Database] Synced ${driversData.length} drivers from Supabase.`);
+        }
+
+        // Always ensure all local drivers are uploaded to Supabase so foreign keys never fail
+        if (this.drivers.size > 0) {
+          for (const d of this.drivers.values()) {
+            await this.syncDriverToSupabase(d);
+          }
+          console.log(`[Database] Ensured ${this.drivers.size} drivers are synchronized to Supabase.`);
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase drivers fetch note:', err);
+      }
+
+      // 4. Fetch Rides
+      try {
+        const { data: ridesData, error: ridesErr } = await supabase
+          .from('rides')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!ridesErr && Array.isArray(ridesData) && ridesData.length > 0) {
+          for (const row of ridesData) {
+            const r: Ride = {
+              id: row.id,
+              reservationId: row.reservation_id,
+              passengerName: row.passenger_name,
+              passengerEmail: row.passenger_email,
+              additionalPassengerEmails: row.additional_passenger_emails || [],
+              driverId: row.driver_id || undefined,
+              driverName: row.driver_name || undefined,
+              driverPhone: row.driver_phone || undefined,
+              currentStatus: row.current_status as RideStatus,
+              createdAt: row.created_at,
+              completedAt: row.completed_at || undefined,
+              updatedAt: row.updated_at || row.created_at,
+              tokens: row.tokens || {},
+              events: Array.isArray(row.events) ? row.events : [],
+              lastEmailDispatchedAt: row.last_email_dispatched_at || undefined,
+              lastAssignedDriverIdForEmail: row.last_assigned_driver_id_for_email || undefined,
+              emailDispatchStatus: row.email_dispatch_status || undefined
+            };
+
+            this.rides.set(r.id, r);
+
+            // Register tracking tokens
+            if (r.tokens) {
+              if (r.tokens.driverToken) {
+                this.tokens.set(r.tokens.driverToken, { token: r.tokens.driverToken, rideId: r.id, type: 'driver', createdAt: r.createdAt });
+              }
+              if (r.tokens.passengerToken) {
+                this.tokens.set(r.tokens.passengerToken, { token: r.tokens.passengerToken, rideId: r.id, type: 'passenger', createdAt: r.createdAt });
+              }
+              if (r.tokens.adminToken) {
+                this.tokens.set(r.tokens.adminToken, { token: r.tokens.adminToken, rideId: r.id, type: 'admin', createdAt: r.createdAt });
+              }
+            }
+
+            // Register events
+            if (Array.isArray(r.events)) {
+              for (const evt of r.events) {
+                if (evt && evt.id) {
+                  this.events.set(evt.id, evt);
+                }
+              }
+            }
+          }
+          console.log(`[Database] Synced ${ridesData.length} permanent rides from Supabase.`);
+        } else if (this.rides.size > 0) {
+          // If Supabase table was newly created, push existing local rides up
+          for (const r of this.rides.values()) {
+            await this.syncRideToSupabase(r);
+          }
+          console.log(`[Database] Initialized Supabase with ${this.rides.size} local rides.`);
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase rides fetch note:', err);
+      }
+
+      this.lastSupabaseSync = new Date().toISOString();
+      this.persistToDisk();
+
+      return {
+        success: true,
+        ridesCount: this.rides.size,
+        driversCount: this.drivers.size
+      };
+    } catch (globalErr: any) {
+      console.warn('[Database] Supabase sync initialization warning:', globalErr.message);
+      return {
+        success: false,
+        ridesCount: this.rides.size,
+        driversCount: this.drivers.size,
+        error: globalErr.message
+      };
     }
   }
 
@@ -707,10 +1135,13 @@ class RideDatabase {
     // Persist to local mirror
     this.persistToDisk();
 
-    // Persist to Cloud Firestore and verify
-    await this.syncRideToFirestore(ride);
+    // Persist to Supabase PostgreSQL & Cloud Firestore
+    await Promise.all([
+      this.syncRideToSupabase(ride),
+      this.syncRideToFirestore(ride)
+    ]);
 
-    console.log(`[Database] Successfully saved permanent ride ${ride.reservationId} (ID: ${ride.id}) with Cloud Firestore persistence.`);
+    console.log(`[Database] Successfully saved permanent ride ${ride.reservationId} (ID: ${ride.id}).`);
     return ride;
   }
 
@@ -734,9 +1165,12 @@ class RideDatabase {
 
     this.rides.delete(rideId);
     this.persistToDisk();
-    await this.deleteRideFromFirestore(rideId);
+    await Promise.all([
+      this.deleteRideFromSupabase(rideId),
+      this.deleteRideFromFirestore(rideId)
+    ]);
 
-    console.log(`[Database] Manually deleted ride ${ride.reservationId} (ID: ${rideId}) from Firestore and local mirror.`);
+    console.log(`[Database] Manually deleted ride ${ride.reservationId} (ID: ${rideId}).`);
     return { success: true };
   }
 
@@ -781,7 +1215,10 @@ class RideDatabase {
 
     ride.updatedAt = new Date().toISOString();
     this.persistToDisk();
-    await this.syncRideToFirestore(ride);
+    await Promise.all([
+      this.syncRideToSupabase(ride),
+      this.syncRideToFirestore(ride)
+    ]);
     return { success: true, ride, isNewAssignment };
   }
 
@@ -804,7 +1241,10 @@ class RideDatabase {
     ride.additionalPassengerEmails = cleanAdditional;
     ride.updatedAt = new Date().toISOString();
     this.persistToDisk();
-    await this.syncRideToFirestore(ride);
+    await Promise.all([
+      this.syncRideToSupabase(ride),
+      this.syncRideToFirestore(ride)
+    ]);
     return ride;
   }
 
@@ -816,7 +1256,10 @@ class RideDatabase {
     ride.lastAssignedDriverIdForEmail = driverId || ride.driverId;
     ride.emailDispatchStatus = record;
     this.persistToDisk();
-    await this.syncRideToFirestore(ride);
+    await Promise.all([
+      this.syncRideToSupabase(ride),
+      this.syncRideToFirestore(ride)
+    ]);
   }
 
   // Driver Operations
@@ -842,7 +1285,10 @@ class RideDatabase {
     };
     this.drivers.set(id, driver);
     this.persistToDisk();
-    await this.syncDriverToFirestore(driver);
+    await Promise.all([
+      this.syncDriverToSupabase(driver),
+      this.syncDriverToFirestore(driver)
+    ]);
     return driver;
   }
 
@@ -861,12 +1307,18 @@ class RideDatabase {
       if (ride.driverId === id) {
         if (data.name !== undefined) ride.driverName = driver.name;
         if (data.phone !== undefined) ride.driverPhone = driver.phone;
-        await this.syncRideToFirestore(ride);
+        await Promise.all([
+          this.syncRideToSupabase(ride),
+          this.syncRideToFirestore(ride)
+        ]);
       }
     }
 
     this.persistToDisk();
-    await this.syncDriverToFirestore(driver);
+    await Promise.all([
+      this.syncDriverToSupabase(driver),
+      this.syncDriverToFirestore(driver)
+    ]);
     return driver;
   }
 
@@ -876,11 +1328,17 @@ class RideDatabase {
       for (const ride of this.rides.values()) {
         if (ride.driverId === id) {
           ride.driverId = undefined;
-          await this.syncRideToFirestore(ride);
+          await Promise.all([
+            this.syncRideToSupabase(ride),
+            this.syncRideToFirestore(ride)
+          ]);
         }
       }
       this.persistToDisk();
-      await this.deleteDriverFromFirestore(id);
+      await Promise.all([
+        this.deleteDriverFromSupabase(id),
+        this.deleteDriverFromFirestore(id)
+      ]);
     }
     return deleted;
   }
@@ -1050,7 +1508,10 @@ class RideDatabase {
     ride.updatedAt = now;
 
     this.persistToDisk();
-    await this.syncRideToFirestore(ride);
+    await Promise.all([
+      this.syncRideToSupabase(ride),
+      this.syncRideToFirestore(ride)
+    ]);
     return { success: true, ride };
   }
 
@@ -1137,7 +1598,10 @@ class RideDatabase {
     }
     this.adminEmails = cleanList;
     this.persistToDisk();
-    await this.syncAdminEmailsToFirestore(this.adminEmails);
+    await Promise.all([
+      this.syncAdminEmailsToSupabase(this.adminEmails),
+      this.syncAdminEmailsToFirestore(this.adminEmails)
+    ]);
     return [...this.adminEmails];
   }
 
@@ -1147,7 +1611,10 @@ class RideDatabase {
     if (!this.adminEmails.includes(clean)) {
       this.adminEmails.push(clean);
       this.persistToDisk();
-      await this.syncAdminEmailsToFirestore(this.adminEmails);
+      await Promise.all([
+        this.syncAdminEmailsToSupabase(this.adminEmails),
+        this.syncAdminEmailsToFirestore(this.adminEmails)
+      ]);
     }
     return [...this.adminEmails];
   }
@@ -1157,7 +1624,10 @@ class RideDatabase {
     const clean = email.trim().toLowerCase();
     this.adminEmails = this.adminEmails.filter(e => e.toLowerCase() !== clean);
     this.persistToDisk();
-    await this.syncAdminEmailsToFirestore(this.adminEmails);
+    await Promise.all([
+      this.syncAdminEmailsToSupabase(this.adminEmails),
+      this.syncAdminEmailsToFirestore(this.adminEmails)
+    ]);
     return [...this.adminEmails];
   }
 
@@ -1177,7 +1647,10 @@ class RideDatabase {
       updatedAt: new Date().toISOString()
     };
     this.persistToDisk();
-    await this.syncBrandingToFirestore(this.branding);
+    await Promise.all([
+      this.syncBrandingToSupabase(this.branding),
+      this.syncBrandingToFirestore(this.branding)
+    ]);
     return { ...this.branding };
   }
 
@@ -1185,30 +1658,43 @@ class RideDatabase {
     this.branding.logoUrl = null;
     this.branding.updatedAt = new Date().toISOString();
     this.persistToDisk();
-    await this.syncBrandingToFirestore(this.branding);
+    await Promise.all([
+      this.syncBrandingToSupabase(this.branding),
+      this.syncBrandingToFirestore(this.branding)
+    ]);
     return { ...this.branding };
   }
 
   // Get Diagnostics & Persistence Status
   async getDatabaseStatus(): Promise<{
+    supabaseActive: boolean;
+    supabaseConfigured: boolean;
+    supabaseError?: string;
     cloudFirestoreActive: boolean;
     projectId?: string;
     databaseId?: string;
     ridesCount: number;
     driversCount: number;
     activeTokensCount: number;
+    lastSupabaseSync: string | null;
     lastFirestoreSync: string | null;
     brandingConfigured: boolean;
     hasCustomLogo: boolean;
   }> {
-    const conn = await verifyFirestoreConnection();
+    const firestoreConn = await verifyFirestoreConnection();
+    const supabaseConn = await verifySupabaseConnection();
+
     return {
-      cloudFirestoreActive: conn.connected,
-      projectId: conn.projectId,
-      databaseId: conn.databaseId,
+      supabaseActive: supabaseConn.connected,
+      supabaseConfigured: isSupabaseConfigured(),
+      supabaseError: supabaseConn.error,
+      cloudFirestoreActive: firestoreConn.connected,
+      projectId: firestoreConn.projectId,
+      databaseId: firestoreConn.databaseId,
       ridesCount: this.rides.size,
       driversCount: this.drivers.size,
       activeTokensCount: this.tokens.size,
+      lastSupabaseSync: this.lastSupabaseSync,
       lastFirestoreSync: this.lastFirestoreSync,
       brandingConfigured: Boolean(this.branding.companyName),
       hasCustomLogo: Boolean(this.branding.logoUrl)
@@ -1230,15 +1716,22 @@ class RideDatabase {
           const existing = this.rides.get(r.id);
           if (!existing) {
             this.rides.set(r.id, r);
-            await this.syncRideToFirestore(r);
+            await Promise.all([
+              this.syncRideToSupabase(r),
+              this.syncRideToFirestore(r)
+            ]);
             restoredCount++;
+            console.log(`[Ride-Diagnostics][Database] Restored missing ride from client vault: #${r.reservationId} (ID: ${r.id})`);
           } else {
             const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
             const payloadTime = new Date(r.updatedAt || r.createdAt).getTime();
             if (payloadTime >= existingTime) {
               const merged = { ...existing, ...r };
               this.rides.set(r.id, merged);
-              await this.syncRideToFirestore(merged);
+              await Promise.all([
+                this.syncRideToSupabase(merged),
+                this.syncRideToFirestore(merged)
+              ]);
             }
           }
 
@@ -1286,7 +1779,10 @@ class RideDatabase {
         if (d && d.id && d.name) {
           if (!this.drivers.has(d.id)) {
             this.drivers.set(d.id, d);
-            await this.syncDriverToFirestore(d);
+            await Promise.all([
+              this.syncDriverToSupabase(d),
+              this.syncDriverToFirestore(d)
+            ]);
           }
         }
       }
@@ -1304,10 +1800,14 @@ class RideDatabase {
         this.branding.tagline = payload.branding.tagline;
       }
       this.branding.updatedAt = new Date().toISOString();
-      await this.syncBrandingToFirestore(this.branding);
+      await Promise.all([
+        this.syncBrandingToSupabase(this.branding),
+        this.syncBrandingToFirestore(this.branding)
+      ]);
     }
 
     this.persistToDisk();
+    console.log(`[Ride-Diagnostics][Database] hydrateFromClient complete: restored ${restoredCount} rides. Total server rides: ${this.rides.size}`);
 
     return {
       restoredRides: restoredCount,

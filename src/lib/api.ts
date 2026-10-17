@@ -32,6 +32,8 @@ export async function apiFetch<T = any>(endpoint: string, options: RequestInit =
   const token = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
     ...(options.headers as Record<string, string> || {})
   };
 
@@ -45,6 +47,7 @@ export async function apiFetch<T = any>(endpoint: string, options: RequestInit =
     : `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
   const res = await fetch(fullUrl, {
+    cache: 'no-store',
     ...options,
     headers
   });
@@ -142,6 +145,7 @@ export function useRealtimeRideStream(options?: { rideId?: string; token?: strin
 
       eventSource.onopen = () => {
         setConnectionStatus('connected');
+        console.log('[Ride-Diagnostics][SSE] Connected to live SSE stream');
       };
 
       eventSource.onmessage = (event) => {
@@ -151,6 +155,7 @@ export function useRealtimeRideStream(options?: { rideId?: string; token?: strin
             window.dispatchEvent(new CustomEvent('company_branding_sync', { detail: data.branding }));
           }
           if (data.type !== 'CONNECTED') {
+            console.log(`[Ride-Diagnostics][SSE] Received real-time event: ${data.type}`, data);
             setLastUpdate(data);
           }
         } catch (err) {
@@ -159,6 +164,7 @@ export function useRealtimeRideStream(options?: { rideId?: string; token?: strin
       };
 
       eventSource.onerror = () => {
+        console.warn('[Ride-Diagnostics][SSE] Connection dropped or interrupted. Reconnecting in 3s...');
         setConnectionStatus('reconnecting');
         if (eventSource) {
           eventSource.close();

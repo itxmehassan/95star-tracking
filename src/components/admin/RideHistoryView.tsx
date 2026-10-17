@@ -72,7 +72,7 @@ export default function RideHistoryView({
 
   // Filtered List
   const filteredRides = useMemo(() => {
-    return rides.filter((ride) => {
+    const list = rides.filter((ride) => {
       // 1. Search Query
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase().trim();
@@ -115,6 +115,8 @@ export default function RideHistoryView({
 
       return true;
     });
+
+    return list.sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0));
   }, [rides, searchTerm, statusFilter, fromDate, toDate]);
 
   // Selection handlers

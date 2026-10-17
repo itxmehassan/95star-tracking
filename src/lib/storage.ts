@@ -40,9 +40,49 @@ export const ClientStorage = {
         existing.unshift(ride);
       }
       this.saveLocalRides(existing);
+      console.log(`[Ride-Diagnostics][Storage] Saved single ride #${ride.reservationId} (ID: ${ride.id}) to permanent local vault.`);
     } catch (e) {
       console.warn('Failed to save single ride to local storage:', e);
     }
+  },
+
+  /**
+   * Intelligently merges server rides with the local vault.
+   * If any ride exists locally (e.g. newly created ride) but the server
+   * response temporarily lacks it (due to server restart, sync delay, or edge proxy cache),
+   * this guarantees the ride is NEVER dropped or wiped out!
+   */
+  mergeRides(serverRides: Ride[]): { merged: Ride[]; missingCount: number } {
+    const localRides = this.getLocalRides();
+    const serverMap = new Map((serverRides || []).map(r => [r.id, r]));
+    const missingFromServer: Ride[] = [];
+
+    for (const localRide of localRides) {
+      if (!serverMap.has(localRide.id)) {
+        missingFromServer.push(localRide);
+        console.log(`[Ride-Diagnostics][Storage] Preserving local ride #${localRide.reservationId} (ID: ${localRide.id}) missing from server.`);
+      }
+    }
+
+    const mergedMap = new Map<string, Ride>();
+    
+    // Server rides
+    for (const r of serverRides || []) {
+      mergedMap.set(r.id, r);
+    }
+    
+    // Preserve local rides missing on server
+    for (const r of missingFromServer) {
+      mergedMap.set(r.id, r);
+    }
+
+    const merged = Array.from(mergedMap.values());
+    merged.sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0));
+
+    // Save consolidated set to local storage
+    this.saveLocalRides(merged);
+
+    return { merged, missingCount: missingFromServer.length };
   },
 
   removeLocalRide(rideId: string) {
@@ -50,6 +90,7 @@ export const ClientStorage = {
       const existing = this.getLocalRides();
       const filtered = existing.filter(r => r.id !== rideId);
       this.saveLocalRides(filtered);
+      console.log(`[Ride-Diagnostics][Storage] Explicitly removed ride ID: ${rideId} from local vault.`);
     } catch (e) {
       console.warn('Failed to remove ride from local storage:', e);
     }

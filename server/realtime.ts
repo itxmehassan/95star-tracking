@@ -26,15 +26,34 @@ class RealtimeHub {
       token: filter?.token
     });
 
+    // Attach stream error and close guards to prevent unhandled socket drop crashes
+    res.on('error', (err) => {
+      console.warn(`[Ride-Diagnostics][Realtime] Client ${id} stream error:`, err.message);
+      this.removeClient(id);
+    });
+
+    res.on('close', () => {
+      this.removeClient(id);
+    });
+
+    res.socket?.on('error', (err) => {
+      console.warn(`[Ride-Diagnostics][Realtime] Client ${id} socket error:`, err.message);
+      this.removeClient(id);
+    });
+
     // Send initial connection confirmation
     this.sendToClient(res, 'CONNECTED', {
       clientId: id,
       timestamp: new Date().toISOString()
     });
+    console.log(`[Ride-Diagnostics][Realtime] SSE client registered: ${id}. Active connections: ${this.clients.size}`);
   }
 
   removeClient(id: string) {
-    this.clients.delete(id);
+    if (this.clients.has(id)) {
+      this.clients.delete(id);
+      console.log(`[Ride-Diagnostics][Realtime] SSE client removed: ${id}. Remaining: ${this.clients.size}`);
+    }
   }
 
   broadcastRideUpdate(ride: Ride) {
@@ -49,13 +68,21 @@ class RealtimeHub {
       timestamp: new Date().toISOString()
     });
 
+    console.log(`[Ride-Diagnostics][Realtime] Broadcasting RIDE_STATUS_UPDATED for ride #${ride.reservationId} (ID: ${ride.id})`);
+
     for (const [id, client] of this.clients.entries()) {
       try {
+        if (client.res.writableEnded || client.res.destroyed) {
+          this.clients.delete(id);
+          continue;
+        }
         // If client specified a rideId, only send if matches
         if (client.rideId && client.rideId !== ride.id) {
           continue;
         }
-        client.res.write(`data: ${payload}\n\n`);
+        client.res.write(`data: ${payload}\n\n`, (err) => {
+          if (err) this.clients.delete(id);
+        });
       } catch (err) {
         this.clients.delete(id);
       }
@@ -69,9 +96,17 @@ class RealtimeHub {
       timestamp: new Date().toISOString()
     });
 
+    console.log(`[Ride-Diagnostics][Realtime] Broadcasting RIDE_CREATED for ride #${ride.reservationId} (ID: ${ride.id}) to ${this.clients.size} clients`);
+
     for (const [id, client] of this.clients.entries()) {
       try {
-        client.res.write(`data: ${payload}\n\n`);
+        if (client.res.writableEnded || client.res.destroyed) {
+          this.clients.delete(id);
+          continue;
+        }
+        client.res.write(`data: ${payload}\n\n`, (err) => {
+          if (err) this.clients.delete(id);
+        });
       } catch (err) {
         this.clients.delete(id);
       }
@@ -85,9 +120,17 @@ class RealtimeHub {
       timestamp: new Date().toISOString()
     });
 
+    console.log(`[Ride-Diagnostics][Realtime] Broadcasting RIDE_DELETED for ride ID: ${rideId}`);
+
     for (const [id, client] of this.clients.entries()) {
       try {
-        client.res.write(`data: ${payload}\n\n`);
+        if (client.res.writableEnded || client.res.destroyed) {
+          this.clients.delete(id);
+          continue;
+        }
+        client.res.write(`data: ${payload}\n\n`, (err) => {
+          if (err) this.clients.delete(id);
+        });
       } catch (err) {
         this.clients.delete(id);
       }
@@ -103,7 +146,13 @@ class RealtimeHub {
 
     for (const [id, client] of this.clients.entries()) {
       try {
-        client.res.write(`data: ${payload}\n\n`);
+        if (client.res.writableEnded || client.res.destroyed) {
+          this.clients.delete(id);
+          continue;
+        }
+        client.res.write(`data: ${payload}\n\n`, (err) => {
+          if (err) this.clients.delete(id);
+        });
       } catch (err) {
         this.clients.delete(id);
       }
@@ -113,7 +162,13 @@ class RealtimeHub {
   private sendHeartbeat() {
     for (const [id, client] of this.clients.entries()) {
       try {
-        client.res.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+        if (client.res.writableEnded || client.res.destroyed) {
+          this.clients.delete(id);
+          continue;
+        }
+        client.res.write(`: heartbeat ${new Date().toISOString()}\n\n`, (err) => {
+          if (err) this.clients.delete(id);
+        });
       } catch (err) {
         this.clients.delete(id);
       }
@@ -122,7 +177,9 @@ class RealtimeHub {
 
   private sendToClient(res: Response, type: string, data: any) {
     try {
-      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(`data: ${JSON.stringify({ type, data })}\n\n`, () => {});
+      }
     } catch {}
   }
 }

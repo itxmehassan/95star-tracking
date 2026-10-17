@@ -85,26 +85,29 @@ export default function App() {
       ]);
 
       const localCached = ClientStorage.getLocalRides();
+      console.log(`[Ride-Diagnostics][Frontend] fetchAdminData: server returned ${ridesRes.length} rides. Local vault has ${localCached.length} rides.`);
 
-      // If server has 0 rides but local storage has rides (e.g. after container restart), re-hydrate server immediately
-      if (ridesRes.length === 0 && localCached.length > 0) {
+      // Intelligently merge server rides with local vault so newly created rides are NEVER dropped or overwritten!
+      const { merged, missingCount } = ClientStorage.mergeRides(ridesRes);
+
+      setRides(merged);
+
+      // If local storage has rides that the server is missing (e.g. server restarted or container reset):
+      // Automatically re-hydrate the server with the missing rides immediately!
+      if (missingCount > 0) {
+        console.warn(`[Ride-Diagnostics][Frontend] Server is missing ${missingCount} ride(s) present in client vault. Triggering automatic server re-hydration.`);
         const syncResult = await ClientStorage.syncWithServer();
-        if (syncResult.syncedRides > 0) {
-          // Re-fetch after hydration
-          const refreshed = await apiFetch<Ride[]>('/api/rides');
-          setRides(refreshed);
-          ClientStorage.saveLocalRides(refreshed);
-          return;
-        }
+        console.log(`[Ride-Diagnostics][Frontend] Auto-hydration complete. Server restored ${syncResult.syncedRides} rides.`);
       }
 
-      setRides(ridesRes);
-      setStats(statsRes);
-      if (ridesRes.length > 0) {
-        ClientStorage.saveLocalRides(ridesRes);
-      }
+      setStats({
+        totalRides: merged.length,
+        todayRides: statsRes.todayRides,
+        activeRides: statsRes.activeRides,
+        completedRides: statsRes.completedRides
+      });
     } catch (err) {
-      console.error('Failed to load admin data:', err);
+      console.error('[Ride-Diagnostics][Frontend] Failed to load admin data:', err);
     }
   };
 
@@ -303,6 +306,7 @@ export default function App() {
             setIsManageDriversOpen(true);
           }}
           onRideCreated={(newRide) => {
+            console.log(`[Ride-Diagnostics][Frontend] onRideCreated: #${newRide.reservationId} (ID: ${newRide.id})`);
             setIsCreateModalOpen(false);
             ClientStorage.saveSingleRide(newRide);
             setRides(prev => [newRide, ...prev.filter(r => r.id !== newRide.id)]);
