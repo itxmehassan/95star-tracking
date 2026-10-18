@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { 
   X, Download, RefreshCw, Smartphone, Users, Shield, 
-  Clock, CheckCircle2, Circle, Copy, Check, ExternalLink, Calendar, User, UserPlus, Car, Phone, Mail, Plus, Send, MessageSquare, Trash2
+  Clock, CheckCircle2, Circle, Copy, Check, ExternalLink, Calendar, User, UserPlus, Car, Phone, Mail, Plus, Send, MessageSquare, Trash2,
+  MinusCircle, Tag
 } from 'lucide-react';
 import { Ride, STATUS_LABELS, STATUS_SEQUENCE, RideStatus } from '../../types';
 import { formatDateTime, formatDuration, downloadSingleRidePdf, getTimeRemaining } from '../../lib/pdf';
@@ -207,6 +208,22 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
                 {currentRide.completedAt ? formatDateTime(currentRide.completedAt) : 'In Progress'}
               </span>
             </div>
+            <div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block">Ride Date & Time</span>
+              <span className="text-xs text-slate-800 font-medium block mt-0.5">
+                {currentRide.rideDate || currentRide.rideTime
+                  ? `${currentRide.rideDate || ''} ${currentRide.rideTime || ''}`.trim()
+                  : 'Not specified'}
+              </span>
+            </div>
+            <div>
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 block">Affiliate Information</span>
+              <span className="text-xs text-slate-800 font-medium block mt-0.5">
+                {currentRide.affiliateName || currentRide.affiliateId
+                  ? `${currentRide.affiliateName || 'Affiliate'}${currentRide.affiliateId ? ` (ID: ${currentRide.affiliateId})` : ''}`
+                  : 'Not specified'}
+              </span>
+            </div>
           </div>
 
           {/* Driver Assignment Card */}
@@ -347,10 +364,15 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
             <div className="border border-slate-200 rounded-xl overflow-hidden">
               <div className="divide-y divide-slate-100">
                 {STATUS_SEQUENCE.map((statusKey, index) => {
-                  const event = currentRide.events.find(e => e.status === statusKey);
+                  const event = (currentRide.events || []).find(e => e.status === statusKey);
                   const isCurrent = currentRide.currentStatus === statusKey;
-                  const isPast = event !== undefined;
-                  const isPending = !event && !isCurrent;
+                  const isRideDone = currentRide.currentStatus === 'done';
+                  const isDoneStage = statusKey === 'done';
+                  
+                  // Use recorded event timestamp or fallback to completedAt if ride is done and this is done stage
+                  const recordedTime = event?.startedAt || (isDoneStage && isRideDone && currentRide.completedAt ? currentRide.completedAt : undefined);
+                  const hasTimestamp = !!recordedTime;
+                  const isNotRecorded = isRideDone && !hasTimestamp;
 
                   return (
                     <div 
@@ -358,20 +380,24 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
                       className={`p-3.5 transition ${
                         isCurrent 
                           ? 'bg-blue-50/40 font-medium' 
-                          : isPast 
+                          : hasTimestamp 
                           ? 'bg-white' 
+                          : isNotRecorded
+                          ? 'bg-slate-50/30 opacity-75'
                           : 'bg-slate-50/40 opacity-55'
                       }`}
                     >
                       <div className="flex items-start sm:items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
                           <div className="shrink-0 mt-0.5 sm:mt-0">
-                            {event ? (
+                            {hasTimestamp ? (
                               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                             ) : isCurrent ? (
                               <div className="w-4 h-4 rounded-full border-2 border-blue-600 flex items-center justify-center">
                                 <div className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
                               </div>
+                            ) : isNotRecorded ? (
+                              <MinusCircle className="w-4 h-4 text-slate-300" />
                             ) : (
                               <Circle className="w-4 h-4 text-slate-300" />
                             )}
@@ -382,18 +408,24 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
                               {index + 1}. {STATUS_LABELS[statusKey]}
                             </span>
                             <span className="text-[11px] text-slate-500 block sm:hidden mt-0.5">
-                              {event ? `Start: ${formatDateTime(event.startedAt)}` : 'Pending'}
+                              {hasTimestamp 
+                                ? `Start: ${formatDateTime(recordedTime)}` 
+                                : isCurrent 
+                                ? 'Active Stage Now' 
+                                : isNotRecorded 
+                                ? 'Not recorded' 
+                                : 'Pending'}
                             </span>
                           </div>
                         </div>
 
                         <div className="text-right shrink-0">
-                          {event ? (
+                          {hasTimestamp ? (
                             <div className="space-y-0.5">
                               <div className="text-xs font-mono text-slate-800">
-                                {formatDateTime(event.startedAt)}
+                                {formatDateTime(recordedTime)}
                               </div>
-                              {event.endedAt && event.durationSeconds !== undefined && event.status !== 'done' && (
+                              {event?.endedAt && event.durationSeconds !== undefined && event.status !== 'done' && (
                                 <div className="text-[11px] text-slate-500 font-semibold">
                                   Duration: {formatDuration(event.durationSeconds)}
                                 </div>
@@ -403,9 +435,13 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
                             <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
                               Active Now
                             </span>
+                          ) : isNotRecorded ? (
+                            <span className="text-xs text-slate-400 italic">
+                              Not recorded
+                            </span>
                           ) : (
                             <span className="text-xs text-slate-400">
-                              —
+                              Pending
                             </span>
                           )}
                         </div>

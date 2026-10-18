@@ -514,7 +514,11 @@ async function startServer() {
         additionalPassengerEmails,
         driverId, 
         driverName, 
-        driverPhone 
+        driverPhone,
+        rideDate,
+        rideTime,
+        affiliateName,
+        affiliateId
       } = req.body;
 
       if (!reservationId || !String(reservationId).trim() || !passengerName || !String(passengerName).trim() || !passengerEmail || !String(passengerEmail).trim()) {
@@ -533,7 +537,11 @@ async function startServer() {
         additionalPassengerEmails: Array.isArray(additionalPassengerEmails) ? additionalPassengerEmails : undefined,
         driverId: driverId ? String(driverId) : undefined,
         driverName: driverName ? String(driverName) : undefined,
-        driverPhone: driverPhone ? String(driverPhone) : undefined
+        driverPhone: driverPhone ? String(driverPhone) : undefined,
+        rideDate: rideDate ? String(rideDate).trim() : undefined,
+        rideTime: rideTime ? String(rideTime).trim() : undefined,
+        affiliateName: affiliateName ? String(affiliateName).trim() : undefined,
+        affiliateId: affiliateId ? String(affiliateId).trim() : undefined
       });
 
       // Verify ride existence in database

@@ -624,7 +624,12 @@ export default function RideHistoryView({
                         </button>
                       </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                        {ride.reservationId}
+                        <div>{ride.reservationId}</div>
+                        {(ride.affiliateName || ride.affiliateId) && (
+                          <div className="text-[10px] text-slate-500 font-sans font-normal truncate max-w-[130px]" title={`${ride.affiliateName || 'Affiliate'} ${ride.affiliateId ? `(${ride.affiliateId})` : ''}`}>
+                            Aff: {ride.affiliateName || ride.affiliateId}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-900">{ride.passengerName}</div>
@@ -662,7 +667,12 @@ export default function RideHistoryView({
                         {getStatusBadge(ride.currentStatus)}
                       </td>
                       <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
-                        {formatDateTime(ride.createdAt)}
+                        <div>{formatDateTime(ride.createdAt)}</div>
+                        {(ride.rideDate || ride.rideTime) && (
+                          <div className="text-[10px] text-blue-600 font-medium">
+                            Sched: {ride.rideDate || ''} {ride.rideTime || ''}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
                         {ride.completedAt ? formatDateTime(ride.completedAt) : '—'}

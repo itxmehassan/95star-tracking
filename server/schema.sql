@@ -5,7 +5,22 @@
 -- Preserves all 193 rides, 19 drivers, 797 events, tokens, sessions, settings.
 -- ==============================================================================
 
--- 1. FLEET DRIVERS TABLE
+-- 1. DRIVERS TABLE (Primary table in Supabase)
+CREATE TABLE IF NOT EXISTS drivers (
+    id VARCHAR(100) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    email VARCHAR(255),
+    vehicle VARCHAR(255),
+    license_plate VARCHAR(50),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active);
+CREATE INDEX IF NOT EXISTS idx_drivers_name ON drivers(name);
+
+-- Legacy/alternate table compatibility
 CREATE TABLE IF NOT EXISTS fleet_drivers (
     id VARCHAR(100) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -17,9 +32,6 @@ CREATE TABLE IF NOT EXISTS fleet_drivers (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_fleet_drivers_active ON fleet_drivers(active);
-CREATE INDEX IF NOT EXISTS idx_fleet_drivers_name ON fleet_drivers(name);
-
 -- 2. RIDES TABLE
 CREATE TABLE IF NOT EXISTS rides (
     id VARCHAR(100) PRIMARY KEY,
@@ -27,7 +39,7 @@ CREATE TABLE IF NOT EXISTS rides (
     passenger_name VARCHAR(255) NOT NULL,
     passenger_email VARCHAR(255) NOT NULL,
     additional_passenger_emails JSONB DEFAULT '[]'::jsonb,
-    driver_id VARCHAR(100) REFERENCES fleet_drivers(id) ON DELETE SET NULL,
+    driver_id VARCHAR(100) REFERENCES drivers(id) ON DELETE SET NULL,
     driver_name VARCHAR(255),
     driver_phone VARCHAR(50),
     current_status VARCHAR(50) NOT NULL DEFAULT 'created',

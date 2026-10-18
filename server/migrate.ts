@@ -70,18 +70,42 @@ export async function migrateJsonToSupabase(customJsonPath?: string): Promise<Mi
       created_at: d.createdAt || new Date().toISOString()
     }));
 
+    // Ensure any driver referenced in rides is also present in driverRows
+    const knownDriverIds = new Set(driverRows.map(d => d.id));
+    for (const r of ridesList) {
+      if (r.driverId && !knownDriverIds.has(r.driverId)) {
+        driverRows.push({
+          id: r.driverId,
+          name: r.driverName || 'Driver',
+          phone: r.driverPhone || null,
+          email: null,
+          vehicle: null,
+          license_plate: null,
+          active: true,
+          created_at: r.createdAt || new Date().toISOString()
+        });
+        knownDriverIds.add(r.driverId);
+      }
+    }
+
     // Batch upsert in chunks of 50
     for (let i = 0; i < driverRows.length; i += 50) {
       const chunk = driverRows.slice(i, i + 50);
-      const { error } = await supabase
-        .from('fleet_drivers')
+      let { error } = await supabase
+        .from('drivers')
         .upsert(chunk, { onConflict: 'id' });
+      if (error && error.message.includes('Could not find the table')) {
+        const fallback = await supabase
+          .from('fleet_drivers')
+          .upsert(chunk, { onConflict: 'id' });
+        error = fallback.error;
+      }
       if (error) {
-        throw new Error(`Failed to migrate fleet drivers: ${error.message}`);
+        throw new Error(`Failed to migrate drivers: ${error.message}`);
       }
       migratedDrivers += chunk.length;
     }
-    console.log(`[Supabase Migration] Successfully upserted ${migratedDrivers} fleet drivers.`);
+    console.log(`[Supabase Migration] Successfully upserted ${migratedDrivers} drivers.`);
   }
 
   // 2. Migrate Rides (upsert on id)
@@ -101,7 +125,6 @@ export async function migrateJsonToSupabase(customJsonPath?: string): Promise<Mi
       completed_at: r.completedAt || null,
       updated_at: r.updatedAt || new Date().toISOString(),
       tokens: r.tokens || {},
-      events: r.events || [],
       last_email_dispatched_at: r.lastEmailDispatchedAt || null,
       last_assigned_driver_id_for_email: r.lastAssignedDriverIdForEmail || null,
       email_dispatch_status: r.emailDispatchStatus || null
@@ -109,13 +132,30 @@ export async function migrateJsonToSupabase(customJsonPath?: string): Promise<Mi
 
     for (let i = 0; i < rideRows.length; i += 50) {
       const chunk = rideRows.slice(i, i + 50);
-      const { error } = await supabase
+      let { error } = await supabase
         .from('rides')
         .upsert(chunk, { onConflict: 'id' });
-      if (error) {
+      if (error && (
+        error.code === '23503' ||
+        error.message.includes('rides_driver_id_fkey') ||
+        error.message.includes('violates foreign key constraint')
+      )) {
+        console.warn(`[Supabase Migration] Chunk ${i} had driver foreign key issues. Upserting rides individually with fallback...`);
+        for (const singleRide of chunk) {
+          let singleRes = await supabase.from('rides').upsert(singleRide, { onConflict: 'id' });
+          if (singleRes.error && (singleRes.error.code === '23503' || singleRes.error.message.includes('foreign key'))) {
+            const noDriver = { ...singleRide, driver_id: null };
+            singleRes = await supabase.from('rides').upsert(noDriver, { onConflict: 'id' });
+          }
+          if (!singleRes.error) {
+            migratedRides++;
+          }
+        }
+      } else if (error) {
         throw new Error(`Failed to migrate rides chunk ${i}: ${error.message}`);
+      } else {
+        migratedRides += chunk.length;
       }
-      migratedRides += chunk.length;
     }
     console.log(`[Supabase Migration] Successfully upserted ${migratedRides} rides.`);
   }

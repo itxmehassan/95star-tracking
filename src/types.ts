@@ -91,6 +91,10 @@ export interface Ride {
   updatedAt: string;
   tokens: TrackingTokens;
   events: RideStatusEvent[];
+  rideDate?: string;
+  rideTime?: string;
+  affiliateName?: string;
+  affiliateId?: string;
   lastEmailDispatchedAt?: string;
   lastAssignedDriverIdForEmail?: string;
   emailDispatchStatus?: EmailDispatchRecord;

@@ -1,9 +1,63 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import JSZip from 'jszip';
-import { Ride, STATUS_LABELS } from '../types';
+import { Ride, STATUS_LABELS, STATUS_SEQUENCE } from '../types';
 import { getLogoDataUrl, getBrandInfo } from './logoData';
 import { formatAmericanDateTime, formatAmericanTime } from './timezone';
+
+export function buildRideTimelineTableData(ride: Ride): string[][] {
+  const tableData: string[][] = [];
+
+  // Row 1: Authoritative Creation Record
+  tableData.push([
+    '1',
+    'Created (Initial Record)',
+    formatDateTime(ride.createdAt),
+    'Initial Record Created'
+  ]);
+
+  const isRideDone = ride.currentStatus === 'done';
+
+  STATUS_SEQUENCE.forEach((statusKey, idx) => {
+    const isDoneStage = statusKey === 'done';
+    const event = (ride.events || []).find(e => e.status === statusKey);
+    const recordedTimestamp = event?.startedAt || (isDoneStage && isRideDone && ride.completedAt ? ride.completedAt : undefined);
+
+    let timestampText = 'Pending';
+    let statusNoteText = 'Pending Progression';
+
+    if (recordedTimestamp) {
+      timestampText = formatDateTime(recordedTimestamp);
+      if (event?.comment) {
+        statusNoteText = `Note: ${event.comment}`;
+      } else if (event?.endedAt && event.durationSeconds !== undefined && statusKey !== 'done') {
+        statusNoteText = `Duration: ${formatDuration(event.durationSeconds)}`;
+      } else if (isDoneStage) {
+        statusNoteText = 'Ride Completed';
+      } else {
+        statusNoteText = 'Milestone Recorded';
+      }
+    } else if (isRideDone) {
+      timestampText = 'Not recorded';
+      statusNoteText = 'Not recorded in audit log';
+    } else if (ride.currentStatus === statusKey) {
+      timestampText = 'In Progress';
+      statusNoteText = 'Active Stage Now';
+    } else {
+      timestampText = 'Pending';
+      statusNoteText = 'Awaiting Progression';
+    }
+
+    tableData.push([
+      String(idx + 2),
+      STATUS_LABELS[statusKey],
+      timestampText,
+      statusNoteText
+    ]);
+  });
+
+  return tableData;
+}
 
 export function formatDateTime(isoString?: string): string {
   return formatAmericanDateTime(isoString, { includeSeconds: true });
@@ -79,21 +133,21 @@ export function generateSingleRidePdf(ride: Ride, logoDataUrl?: string): jsPDF {
   // Render Header with bigger logo on left and '95 Star Tracking' on right
   renderPdfHeader(doc, ride, logoDataUrl);
 
-  let y = 44;
+  let y = 43;
 
   // Reservation & Passenger Details Grid
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(15, 23, 42);
-  doc.text('Reservation Details', 20, y);
-  y += 6;
+  doc.text('Reservation & Dispatch Details', 20, y);
+  y += 5.5;
 
   const leftColX = 20;
   const rightColX = 110;
 
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   
-  // Row 1
+  // Row 1: Reservation ID & Created At
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(71, 85, 105);
   doc.text('Reservation ID:', leftColX, y);
@@ -107,9 +161,9 @@ export function generateSingleRidePdf(ride: Ride, logoDataUrl?: string): jsPDF {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
   doc.text(formatDateTime(ride.createdAt), rightColX + 28, y);
-  y += 6;
+  y += 5.5;
 
-  // Row 2
+  // Row 2: Passenger Name & Completed At
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(71, 85, 105);
   doc.text('Passenger Name:', leftColX, y);
@@ -119,13 +173,13 @@ export function generateSingleRidePdf(ride: Ride, logoDataUrl?: string): jsPDF {
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(71, 85, 105);
-  doc.text('Assigned Driver:', rightColX, y);
+  doc.text('Completed At:', rightColX, y);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(ride.driverName || 'Unassigned', rightColX + 28, y);
-  y += 6;
+  doc.text(ride.completedAt ? formatDateTime(ride.completedAt) : (ride.currentStatus === 'done' ? 'Completed' : 'In Progress'), rightColX + 28, y);
+  y += 5.5;
 
-  // Row 3
+  // Row 3: Passenger Email & Assigned Driver
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(71, 85, 105);
   doc.text('Passenger Email:', leftColX, y);
@@ -133,48 +187,73 @@ export function generateSingleRidePdf(ride: Ride, logoDataUrl?: string): jsPDF {
   doc.setTextColor(15, 23, 42);
   doc.text(ride.passengerEmail, leftColX + 32, y);
 
-  if (ride.driverPhone) {
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(71, 85, 105);
-    doc.text('Driver Contact:', rightColX, y);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(15, 23, 42);
-    doc.text(ride.driverPhone, rightColX + 28, y);
-  }
-  y += 10;
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Assigned Driver:', rightColX, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(ride.driverName || 'Unassigned', rightColX + 28, y);
+  y += 5.5;
+
+  // Row 4: Ride Date & Time & Driver Contact
+  const scheduleText = (ride.rideDate || ride.rideTime)
+    ? `${ride.rideDate || ''} ${ride.rideTime || ''}`.trim()
+    : 'Not specified';
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Ride Schedule:', leftColX, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(scheduleText, leftColX + 32, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Driver Contact:', rightColX, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(ride.driverPhone || '—', rightColX + 28, y);
+  y += 5.5;
+
+  // Row 5: Affiliate Info & Current Status
+  const affiliateText = (ride.affiliateName || ride.affiliateId)
+    ? `${ride.affiliateName || 'Affiliate'}${ride.affiliateId ? ` (ID: ${ride.affiliateId})` : ''}`
+    : 'Not specified';
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Affiliate Info:', leftColX, y);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(15, 23, 42);
+  doc.text(affiliateText, leftColX + 32, y);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Current Status:', rightColX, y);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(ride.currentStatus === 'done' ? 16 : 37, ride.currentStatus === 'done' ? 185 : 99, ride.currentStatus === 'done' ? 129 : 235);
+  doc.text((STATUS_LABELS[ride.currentStatus] || ride.currentStatus).toUpperCase(), rightColX + 28, y);
+  y += 9;
 
   // Status Timeline Section
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(15, 23, 42);
   doc.text('Status Progression & Server Timestamps', 20, y);
   y += 4;
 
-  const tableData = (ride.events || []).map((evt, idx) => {
-    const label = STATUS_LABELS[evt.status] || evt.status;
-    const start = formatDateTime(evt.startedAt);
-
-    return [
-      String(idx + 1),
-      label,
-      start
-    ];
-  });
-
-  if (tableData.length === 0) {
-    tableData.push(['—', 'Created (Awaiting Driver)', formatDateTime(ride.createdAt)]);
-  }
+  const tableData = buildRideTimelineTableData(ride);
 
   autoTable(doc, {
     startY: y,
-    head: [['#', 'Status Stage', 'Recorded Server Timestamp']],
+    head: [['#', 'Status Stage', 'Recorded Server Timestamp', 'Status & Duration Notes']],
     body: tableData,
     margin: { left: 20, right: 20 },
     theme: 'plain',
     styles: {
-      fontSize: 9,
+      fontSize: 8.5,
       textColor: [15, 23, 42],
-      cellPadding: 4,
+      cellPadding: 3.5,
       lineColor: [226, 232, 240],
       lineWidth: 0.2
     },
@@ -186,13 +265,14 @@ export function generateSingleRidePdf(ride: Ride, logoDataUrl?: string): jsPDF {
       lineColor: [203, 213, 225]
     },
     columnStyles: {
-      0: { cellWidth: 14, halign: 'center' },
-      1: { cellWidth: 70, fontStyle: 'bold' },
-      2: { cellWidth: 86 }
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 48, fontStyle: 'bold' },
+      2: { cellWidth: 58 },
+      3: { cellWidth: 54 }
     }
   });
 
-  const finalY = (doc as any).lastAutoTable.finalY + 12;
+  const finalY = (doc as any).lastAutoTable.finalY + 10;
 
   // Footer / Verification note
   doc.setFont('helvetica', 'normal');
@@ -245,18 +325,20 @@ export async function downloadBulkCombinedPdf(rides: Ride[]) {
     
     renderPdfHeader(combinedDoc, ride, logoDataUrl, `OFFICIAL RIDE REPORT (${index + 1} OF ${rides.length})`);
 
-    let y = 44;
+    let y = 43;
 
     combinedDoc.setFont('helvetica', 'bold');
-    combinedDoc.setFontSize(11);
+    combinedDoc.setFontSize(10.5);
     combinedDoc.setTextColor(15, 23, 42);
-    combinedDoc.text('Reservation Details', 20, y);
-    y += 6;
+    combinedDoc.text('Reservation & Dispatch Details', 20, y);
+    y += 5.5;
 
     const leftColX = 20;
     const rightColX = 110;
 
-    combinedDoc.setFontSize(9);
+    combinedDoc.setFontSize(8.5);
+    
+    // Row 1: Reservation ID & Created At
     combinedDoc.setFont('helvetica', 'bold');
     combinedDoc.setTextColor(71, 85, 105);
     combinedDoc.text('Reservation ID:', leftColX, y);
@@ -270,8 +352,9 @@ export async function downloadBulkCombinedPdf(rides: Ride[]) {
     combinedDoc.setFont('helvetica', 'normal');
     combinedDoc.setTextColor(15, 23, 42);
     combinedDoc.text(formatDateTime(ride.createdAt), rightColX + 28, y);
-    y += 6;
+    y += 5.5;
 
+    // Row 2: Passenger Name & Completed At
     combinedDoc.setFont('helvetica', 'bold');
     combinedDoc.setTextColor(71, 85, 105);
     combinedDoc.text('Passenger Name:', leftColX, y);
@@ -281,12 +364,13 @@ export async function downloadBulkCombinedPdf(rides: Ride[]) {
 
     combinedDoc.setFont('helvetica', 'bold');
     combinedDoc.setTextColor(71, 85, 105);
-    combinedDoc.text('Assigned Driver:', rightColX, y);
+    combinedDoc.text('Completed At:', rightColX, y);
     combinedDoc.setFont('helvetica', 'normal');
     combinedDoc.setTextColor(15, 23, 42);
-    combinedDoc.text(ride.driverName || 'Unassigned', rightColX + 28, y);
-    y += 6;
+    combinedDoc.text(ride.completedAt ? formatDateTime(ride.completedAt) : (ride.currentStatus === 'done' ? 'Completed' : 'In Progress'), rightColX + 28, y);
+    y += 5.5;
 
+    // Row 3: Passenger Email & Assigned Driver
     combinedDoc.setFont('helvetica', 'bold');
     combinedDoc.setTextColor(71, 85, 105);
     combinedDoc.text('Passenger Email:', leftColX, y);
@@ -294,36 +378,66 @@ export async function downloadBulkCombinedPdf(rides: Ride[]) {
     combinedDoc.setTextColor(15, 23, 42);
     combinedDoc.text(ride.passengerEmail, leftColX + 32, y);
 
-    if (ride.driverPhone) {
-      combinedDoc.setFont('helvetica', 'bold');
-      combinedDoc.setTextColor(71, 85, 105);
-      combinedDoc.text('Driver Contact:', rightColX, y);
-      combinedDoc.setFont('helvetica', 'normal');
-      combinedDoc.setTextColor(15, 23, 42);
-      combinedDoc.text(ride.driverPhone, rightColX + 28, y);
-    }
-    y += 10;
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(71, 85, 105);
+    combinedDoc.text('Assigned Driver:', rightColX, y);
+    combinedDoc.setFont('helvetica', 'normal');
+    combinedDoc.setTextColor(15, 23, 42);
+    combinedDoc.text(ride.driverName || 'Unassigned', rightColX + 28, y);
+    y += 5.5;
 
-    const tableData = (ride.events || []).map((evt, idx) => {
-      const label = STATUS_LABELS[evt.status] || evt.status;
-      const start = formatDateTime(evt.startedAt);
-      return [String(idx + 1), label, start];
-    });
+    // Row 4: Ride Date & Time & Driver Contact
+    const scheduleText = (ride.rideDate || ride.rideTime)
+      ? `${ride.rideDate || ''} ${ride.rideTime || ''}`.trim()
+      : 'Not specified';
 
-    if (tableData.length === 0) {
-      tableData.push(['—', 'Created (Awaiting Driver)', formatDateTime(ride.createdAt)]);
-    }
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(71, 85, 105);
+    combinedDoc.text('Ride Schedule:', leftColX, y);
+    combinedDoc.setFont('helvetica', 'normal');
+    combinedDoc.setTextColor(15, 23, 42);
+    combinedDoc.text(scheduleText, leftColX + 32, y);
+
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(71, 85, 105);
+    combinedDoc.text('Driver Contact:', rightColX, y);
+    combinedDoc.setFont('helvetica', 'normal');
+    combinedDoc.setTextColor(15, 23, 42);
+    combinedDoc.text(ride.driverPhone || '—', rightColX + 28, y);
+    y += 5.5;
+
+    // Row 5: Affiliate Info & Current Status
+    const affiliateText = (ride.affiliateName || ride.affiliateId)
+      ? `${ride.affiliateName || 'Affiliate'}${ride.affiliateId ? ` (ID: ${ride.affiliateId})` : ''}`
+      : 'Not specified';
+
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(71, 85, 105);
+    combinedDoc.text('Affiliate Info:', leftColX, y);
+    combinedDoc.setFont('helvetica', 'normal');
+    combinedDoc.setTextColor(15, 23, 42);
+    combinedDoc.text(affiliateText, leftColX + 32, y);
+
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(71, 85, 105);
+    combinedDoc.text('Current Status:', rightColX, y);
+    combinedDoc.setFont('helvetica', 'bold');
+    combinedDoc.setTextColor(ride.currentStatus === 'done' ? 16 : 37, ride.currentStatus === 'done' ? 185 : 99, ride.currentStatus === 'done' ? 129 : 235);
+    combinedDoc.text((STATUS_LABELS[ride.currentStatus] || ride.currentStatus).toUpperCase(), rightColX + 28, y);
+    y += 9;
+
+    const tableData = buildRideTimelineTableData(ride);
 
     autoTable(combinedDoc, {
       startY: y,
-      head: [['#', 'Status Stage', 'Recorded Server Timestamp']],
+      head: [['#', 'Status Stage', 'Recorded Server Timestamp', 'Status & Duration Notes']],
       body: tableData,
       margin: { left: 20, right: 20 },
       theme: 'plain',
       styles: {
-        fontSize: 9,
+        fontSize: 8.5,
         textColor: [15, 23, 42],
-        cellPadding: 4,
+        cellPadding: 3.5,
         lineColor: [226, 232, 240],
         lineWidth: 0.2
       },
@@ -335,9 +449,10 @@ export async function downloadBulkCombinedPdf(rides: Ride[]) {
         lineColor: [203, 213, 225]
       },
       columnStyles: {
-        0: { cellWidth: 14, halign: 'center' },
-        1: { cellWidth: 70, fontStyle: 'bold' },
-        2: { cellWidth: 86 }
+        0: { cellWidth: 10, halign: 'center' },
+        1: { cellWidth: 48, fontStyle: 'bold' },
+        2: { cellWidth: 58 },
+        3: { cellWidth: 54 }
       }
     });
   });

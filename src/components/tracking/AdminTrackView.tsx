@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, Clock, CheckCircle2, Circle, 
-  Download, AlertCircle, RefreshCw, ArrowLeft, ExternalLink, MessageSquare, User
+  Download, AlertCircle, RefreshCw, ArrowLeft, ExternalLink, MessageSquare, User,
+  MinusCircle
 } from 'lucide-react';
 import { Ride, RideStatus, STATUS_SEQUENCE, STATUS_LABELS } from '../../types';
 import { apiFetch, useRealtimeRideStream } from '../../lib/api';
@@ -184,9 +185,14 @@ export default function AdminTrackView({ token }: AdminTrackViewProps) {
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <div className="divide-y divide-slate-100">
               {STATUS_SEQUENCE.map((statusKey, index) => {
-                const event = ride.events.find(e => e.status === statusKey);
+                const event = (ride.events || []).find(e => e.status === statusKey);
                 const isCurrent = ride.currentStatus === statusKey;
-                const isPast = event !== undefined;
+                const isRideDone = ride.currentStatus === 'done';
+                const isDoneStage = statusKey === 'done';
+
+                const recordedTime = event?.startedAt || (isDoneStage && isRideDone && ride.completedAt ? ride.completedAt : undefined);
+                const hasTimestamp = !!recordedTime;
+                const isNotRecorded = isRideDone && !hasTimestamp;
 
                 return (
                   <div 
@@ -194,20 +200,24 @@ export default function AdminTrackView({ token }: AdminTrackViewProps) {
                     className={`p-4 transition ${
                       isCurrent 
                         ? 'bg-blue-50/40' 
-                        : isPast 
+                        : hasTimestamp 
                         ? 'bg-white' 
+                        : isNotRecorded
+                        ? 'bg-slate-50/30 opacity-75'
                         : 'bg-slate-50/50 opacity-55'
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
                         <div className="shrink-0">
-                          {event ? (
+                          {hasTimestamp ? (
                             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                           ) : isCurrent ? (
                             <div className="w-5 h-5 rounded-full border-2 border-blue-600 flex items-center justify-center">
                               <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
                             </div>
+                          ) : isNotRecorded ? (
+                            <MinusCircle className="w-5 h-5 text-slate-300" />
                           ) : (
                             <Circle className="w-5 h-5 text-slate-300" />
                           )}
@@ -217,21 +227,25 @@ export default function AdminTrackView({ token }: AdminTrackViewProps) {
                           <span className="text-xs font-bold text-slate-900 block">
                             {index + 1}. {STATUS_LABELS[statusKey]}
                           </span>
-                          {event && (
+                          {hasTimestamp ? (
                             <span className="text-[11px] text-slate-500 font-mono">
-                              Started: {formatDateTime(event.startedAt)}
+                              Started: {formatDateTime(recordedTime)}
                             </span>
-                          )}
+                          ) : isNotRecorded ? (
+                            <span className="text-[11px] text-slate-400 italic">
+                              Not recorded in audit log
+                            </span>
+                          ) : null}
                         </div>
                       </div>
 
                       <div className="sm:text-right pl-8 sm:pl-0">
-                        {event ? (
+                        {hasTimestamp ? (
                           <div className="space-y-0.5">
                             <div className="text-xs font-mono text-slate-700">
-                              {event.endedAt ? `Ended: ${formatDateTime(event.endedAt)}` : 'In Progress'}
+                              {event?.endedAt ? `Ended: ${formatDateTime(event.endedAt)}` : isDoneStage ? formatDateTime(recordedTime) : 'Completed'}
                             </div>
-                            {event.endedAt && event.durationSeconds !== undefined && event.status !== 'done' && (
+                            {event?.endedAt && event.durationSeconds !== undefined && event.status !== 'done' && (
                               <div className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded inline-block">
                                 Duration: {formatDuration(event.durationSeconds)}
                               </div>
@@ -240,6 +254,10 @@ export default function AdminTrackView({ token }: AdminTrackViewProps) {
                         ) : isCurrent ? (
                           <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
                             Active Stage
+                          </span>
+                        ) : isNotRecorded ? (
+                          <span className="text-xs text-slate-400 italic">
+                            Not recorded
                           </span>
                         ) : (
                           <span className="text-xs text-slate-400">

@@ -394,12 +394,20 @@ class RideDatabase {
       const supabase = getSupabaseClient();
       if (!supabase) return false;
 
-      // If ride has an assigned driver, make sure that driver is synced to Supabase first
+      // If ride has an assigned driver, make sure that driver exists and is synced to Supabase first
       if (ride.driverId) {
-        const driver = this.drivers.get(ride.driverId);
-        if (driver) {
-          await this.syncDriverToSupabase(driver);
+        let driver = this.drivers.get(ride.driverId);
+        if (!driver) {
+          driver = {
+            id: ride.driverId,
+            name: ride.driverName || 'Driver',
+            phone: ride.driverPhone || undefined,
+            active: true,
+            createdAt: ride.createdAt || new Date().toISOString()
+          };
+          this.drivers.set(driver.id, driver);
         }
+        await this.syncDriverToSupabase(driver);
       }
 
       const row: Record<string, any> = {
@@ -424,7 +432,12 @@ class RideDatabase {
       let { error } = await supabase.from('rides').upsert(row, { onConflict: 'id' });
 
       // If error is foreign key violation on driver_id:
-      if (error && (error.message.includes('rides_driver_id_fkey') || error.message.includes('violates foreign key constraint'))) {
+      if (error && (
+        error.code === '23503' ||
+        error.message.includes('rides_driver_id_fkey') || 
+        error.message.includes('violates foreign key constraint') ||
+        error.message.includes('foreign key')
+      )) {
         console.warn(`[Ride-Diagnostics][Database] Supabase driver foreign key violation for driver ${ride.driverId}. Retrying with driver_id null while keeping driver_name.`);
         row.driver_id = null;
         const retryResult = await supabase.from('rides').upsert(row, { onConflict: 'id' });
@@ -432,16 +445,62 @@ class RideDatabase {
           console.error(`[Database] Error saving ride ${ride.id} to Supabase driver-fallback:`, retryResult.error.message);
           return false;
         }
-        return true;
+      } else if (error) {
+        console.error(`[Database] Error saving ride ${ride.id} to Supabase:`, error.message);
+        return false;
       }
 
+      // Also persist all status events for this ride into Supabase ride_events table
+      if (Array.isArray(ride.events) && ride.events.length > 0) {
+        const eventRows = ride.events.map(e => ({
+          id: e.id,
+          ride_id: e.rideId || ride.id,
+          reservation_id: e.reservationId || ride.reservationId,
+          status: e.status,
+          started_at: e.startedAt,
+          ended_at: e.endedAt || null,
+          duration_seconds: e.durationSeconds !== undefined ? e.durationSeconds : null,
+          created_at: e.createdAt || e.startedAt || new Date().toISOString()
+        }));
+        try {
+          await supabase.from('ride_events').upsert(eventRows, { onConflict: 'id' });
+        } catch (eventErr) {
+          console.warn('[Database] Background event sync note:', eventErr);
+        }
+      }
+
+      return true;
+    } catch (err) {
+      console.error(`[Database] Exception saving ride ${ride.id} to Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync a single event to Supabase ride_events table
+   */
+  public async syncEventToSupabase(event: RideStatusEvent): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+      const row = {
+        id: event.id,
+        ride_id: event.rideId,
+        reservation_id: event.reservationId,
+        status: event.status,
+        started_at: event.startedAt,
+        ended_at: event.endedAt || null,
+        duration_seconds: event.durationSeconds !== undefined ? event.durationSeconds : null,
+        created_at: event.createdAt || event.startedAt || new Date().toISOString()
+      };
+      const { error } = await supabase.from('ride_events').upsert(row, { onConflict: 'id' });
       if (error) {
-        console.error(`[Database] Error saving ride ${ride.id} to Supabase:`, error.message);
+        console.warn(`[Database] Error saving event ${event.id} to Supabase:`, error.message);
         return false;
       }
       return true;
     } catch (err) {
-      console.error(`[Database] Exception saving ride ${ride.id} to Supabase:`, err);
+      console.warn(`[Database] Exception saving event ${event.id} to Supabase:`, err);
       return false;
     }
   }
@@ -761,15 +820,63 @@ class RideDatabase {
         console.warn('[Database] Supabase drivers fetch note:', err);
       }
 
-      // 4. Fetch Rides
+      // 4. Fetch Rides & Associated Status Events
       try {
-        const { data: ridesData, error: ridesErr } = await supabase
-          .from('rides')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const [ridesRes, eventsRes] = await Promise.all([
+          supabase.from('rides').select('*').order('created_at', { ascending: false }),
+          supabase.from('ride_events').select('*').order('started_at', { ascending: true })
+        ]);
+
+        const ridesData = ridesRes.data;
+        const ridesErr = ridesRes.error;
+        const eventsData = eventsRes.data;
+
+        // Group status events by ride_id and reservation_id
+        const eventsByRideId = new Map<string, RideStatusEvent[]>();
+        if (Array.isArray(eventsData)) {
+          for (const evRow of eventsData) {
+            const evt: RideStatusEvent = {
+              id: evRow.id,
+              rideId: evRow.ride_id,
+              reservationId: evRow.reservation_id,
+              status: evRow.status as RideStatus,
+              startedAt: evRow.started_at,
+              endedAt: evRow.ended_at || undefined,
+              durationSeconds: evRow.duration_seconds !== null && evRow.duration_seconds !== undefined ? Number(evRow.duration_seconds) : undefined,
+              comment: evRow.comment || undefined,
+              driverId: evRow.driver_id || undefined,
+              driverName: evRow.driver_name || undefined,
+              createdAt: evRow.created_at || evRow.started_at
+            };
+            this.events.set(evt.id, evt);
+
+            if (evt.rideId) {
+              const list = eventsByRideId.get(evt.rideId) || [];
+              list.push(evt);
+              eventsByRideId.set(evt.rideId, list);
+            }
+            if (evt.reservationId) {
+              const listByRes = eventsByRideId.get(evt.reservationId) || [];
+              if (!listByRes.some(e => e.id === evt.id)) {
+                listByRes.push(evt);
+                eventsByRideId.set(evt.reservationId, listByRes);
+              }
+            }
+          }
+        }
 
         if (!ridesErr && Array.isArray(ridesData) && ridesData.length > 0) {
           for (const row of ridesData) {
+            const existingRide = this.rides.get(row.id);
+            const supabaseEvents = eventsByRideId.get(row.id) || eventsByRideId.get(row.reservation_id) || [];
+            
+            // Prefer loaded Supabase events; fallback to existing local events if Supabase had none
+            const finalEvents = supabaseEvents.length > 0 
+              ? supabaseEvents 
+              : (existingRide?.events && existingRide.events.length > 0 
+                ? existingRide.events 
+                : (Array.isArray(row.events) ? row.events : []));
+
             const r: Ride = {
               id: row.id,
               reservationId: row.reservation_id,
@@ -781,10 +888,14 @@ class RideDatabase {
               driverPhone: row.driver_phone || undefined,
               currentStatus: row.current_status as RideStatus,
               createdAt: row.created_at,
-              completedAt: row.completed_at || undefined,
+              completedAt: row.completed_at || existingRide?.completedAt || undefined,
               updatedAt: row.updated_at || row.created_at,
               tokens: row.tokens || {},
-              events: Array.isArray(row.events) ? row.events : [],
+              events: finalEvents,
+              rideDate: existingRide?.rideDate,
+              rideTime: existingRide?.rideTime,
+              affiliateName: existingRide?.affiliateName,
+              affiliateId: existingRide?.affiliateId,
               lastEmailDispatchedAt: row.last_email_dispatched_at || undefined,
               lastAssignedDriverIdForEmail: row.last_assigned_driver_id_for_email || undefined,
               emailDispatchStatus: row.email_dispatch_status || undefined
@@ -805,7 +916,7 @@ class RideDatabase {
               }
             }
 
-            // Register events
+            // Register events in lookup map
             if (Array.isArray(r.events)) {
               for (const evt of r.events) {
                 if (evt && evt.id) {
@@ -814,7 +925,7 @@ class RideDatabase {
               }
             }
           }
-          console.log(`[Database] Synced ${ridesData.length} permanent rides from Supabase.`);
+          console.log(`[Database] Synced ${ridesData.length} permanent rides and ${eventsData?.length || 0} events from Supabase.`);
         } else if (this.rides.size > 0) {
           // If Supabase table was newly created, push existing local rides up
           for (const r of this.rides.values()) {
@@ -953,6 +1064,45 @@ class RideDatabase {
               });
             }
           }
+
+          // Ensure events array is properly reconstructed and populated from this.events
+          if (!Array.isArray(ride.events) || ride.events.length === 0) {
+            const matchingEvents: RideStatusEvent[] = [];
+            for (const evt of this.events.values()) {
+              if (evt && (evt.rideId === rideId || (ride.reservationId && evt.reservationId === ride.reservationId))) {
+                if (!matchingEvents.some(m => m.id === evt.id)) {
+                  matchingEvents.push(evt);
+                }
+              }
+            }
+            if (matchingEvents.length > 0) {
+              matchingEvents.sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+              ride.events = matchingEvents;
+            } else {
+              ride.events = [];
+            }
+          }
+
+          // If ride is completed, ensure completedAt timestamp is populated from done event if present
+          if (ride.currentStatus === 'done' && !ride.completedAt) {
+            const doneEvt = ride.events.find(e => e.status === 'done');
+            if (doneEvt && doneEvt.startedAt) {
+              ride.completedAt = doneEvt.startedAt;
+            }
+          }
+
+          // Ensure referenced driver exists in this.drivers to prevent foreign key issues
+          if (ride.driverId && !this.drivers.has(ride.driverId)) {
+            const reconstructedDriver: Driver = {
+              id: ride.driverId,
+              name: ride.driverName || 'Driver',
+              phone: ride.driverPhone || undefined,
+              active: true,
+              createdAt: ride.createdAt || new Date().toISOString()
+            };
+            this.drivers.set(ride.driverId, reconstructedDriver);
+            console.log(`[Database] Auto-reconstructed driver reference ${ride.driverId} (${reconstructedDriver.name}) from ride #${ride.reservationId}`);
+          }
         }
 
         if (this.drivers.size === 0) {
@@ -1068,6 +1218,10 @@ class RideDatabase {
     driverId?: string;
     driverName?: string;
     driverPhone?: string;
+    rideDate?: string;
+    rideTime?: string;
+    affiliateName?: string;
+    affiliateId?: string;
   }): Promise<Ride> {
     if (!data.reservationId || !data.passengerName || !data.passengerEmail) {
       throw new Error('Reservation ID, Passenger Name, and Passenger Email are required to create a ride.');
@@ -1115,6 +1269,10 @@ class RideDatabase {
       currentStatus: 'created',
       createdAt: createdTime,
       updatedAt: createdTime,
+      rideDate: data.rideDate ? String(data.rideDate).trim() : undefined,
+      rideTime: data.rideTime ? String(data.rideTime).trim() : undefined,
+      affiliateName: data.affiliateName ? String(data.affiliateName).trim() : undefined,
+      affiliateId: data.affiliateId ? String(data.affiliateId).trim() : undefined,
       tokens: {
         driverToken,
         passengerToken,
@@ -1510,6 +1668,7 @@ class RideDatabase {
     this.persistToDisk();
     await Promise.all([
       this.syncRideToSupabase(ride),
+      this.syncEventToSupabase(newEvent),
       this.syncRideToFirestore(ride)
     ]);
     return { success: true, ride };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles } from 'lucide-react';
+import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles, Calendar, Clock, Tag } from 'lucide-react';
 import { apiFetch, fetchDrivers, createDriver as apiCreateDriver } from '../../lib/api';
 import { ClientStorage } from '../../lib/storage';
 import { Ride, Driver } from '../../types';
@@ -17,6 +17,14 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
   const [additionalEmails, setAdditionalEmails] = useState<string[]>([]);
   const [newExtraEmail, setNewExtraEmail] = useState('');
   
+  // Optional Ride Date & Time
+  const [rideDate, setRideDate] = useState('');
+  const [rideTime, setRideTime] = useState('');
+
+  // Optional Affiliate Info
+  const [affiliateName, setAffiliateName] = useState('');
+  const [affiliateId, setAffiliateId] = useState('');
+
   // Centralized Drivers Collection State
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState('');
@@ -151,7 +159,11 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
           additionalPassengerEmails: additionalEmails,
           driverId: selectedDriver?.id || undefined,
           driverName: selectedDriver?.name || undefined,
-          driverPhone: selectedDriver?.phone || undefined
+          driverPhone: selectedDriver?.phone || undefined,
+          rideDate: rideDate.trim() || undefined,
+          rideTime: rideTime.trim() || undefined,
+          affiliateName: affiliateName.trim() || undefined,
+          affiliateId: affiliateId.trim() || undefined
         })
       });
 
@@ -302,6 +314,84 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
                 <Plus className="w-3.5 h-3.5" />
                 <span>Add</span>
               </button>
+            </div>
+          </div>
+
+          {/* Optional Ride Date & Time */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+              Ride Schedule (Optional)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Ride Date</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Calendar className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="date"
+                    value={rideDate}
+                    onChange={(e) => setRideDate(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Ride Time</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Clock className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="time"
+                    value={rideTime}
+                    onChange={(e) => setRideTime(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Optional Affiliate Name & ID */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+              Affiliate Information (Optional)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate Name</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Tag className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={affiliateName}
+                    onChange={(e) => setAffiliateName(e.target.value)}
+                    placeholder="e.g. VIP Limos Network"
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate ID</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Hash className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={affiliateId}
+                    onChange={(e) => setAffiliateId(e.target.value)}
+                    placeholder="e.g. AFF-1049"
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
