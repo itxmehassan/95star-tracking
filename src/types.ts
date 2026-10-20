@@ -41,6 +41,18 @@ export interface Driver {
   createdAt: string;
 }
 
+export interface Affiliate {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  company?: string;
+  notes?: string;
+  active?: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface RideStatusEvent {
   id: string;
   rideId: string;

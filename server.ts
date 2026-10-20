@@ -372,6 +372,62 @@ async function startServer() {
   });
 
   // ==========================================
+  // AFFILIATE MANAGEMENT APIS
+  // ==========================================
+  app.get('/api/affiliates', requireAdminAuth, (_req: Request, res: Response) => {
+    const affiliates = db.getAllAffiliates();
+    res.json(affiliates);
+  });
+
+  app.post('/api/affiliates', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const { name, phone, email, company, notes } = req.body;
+      if (!name || !String(name).trim()) {
+        return res.status(400).json({ error: 'Affiliate name is required.' });
+      }
+
+      const affiliate = await db.createAffiliate({
+        name: String(name),
+        phone: phone ? String(phone) : undefined,
+        email: email ? String(email) : undefined,
+        company: company ? String(company) : undefined,
+        notes: notes ? String(notes) : undefined
+      });
+
+      res.status(201).json(affiliate);
+    } catch (err: any) {
+      console.error('[API Create Affiliate Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to create affiliate' });
+    }
+  });
+
+  app.put('/api/affiliates/:id', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const updated = await db.updateAffiliate(req.params.id, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: 'Affiliate not found.' });
+      }
+      res.json(updated);
+    } catch (err: any) {
+      console.error('[API Update Affiliate Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to update affiliate' });
+    }
+  });
+
+  app.delete('/api/affiliates/:id', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const deleted = await db.deleteAffiliate(req.params.id);
+      if (!deleted) {
+        return res.status(404).json({ error: 'Affiliate not found.' });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('[API Delete Affiliate Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to delete affiliate' });
+    }
+  });
+
+  // ==========================================
   // BRANDING & LOGO MANAGEMENT APIS
   // ==========================================
   app.get('/api/branding', (_req: Request, res: Response) => {

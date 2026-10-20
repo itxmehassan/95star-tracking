@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Car, Clock, CheckCircle2, Calendar, Plus, 
   ExternalLink, Eye, Download, Link2, User, UserPlus, Search, X,
-  CheckSquare, Square, FileArchive, FileText, FileSpreadsheet, ChevronDown, Trash2
+  CheckSquare, Square, FileArchive, FileText, FileSpreadsheet, ChevronDown, Trash2, Handshake
 } from 'lucide-react';
 import { Ride, DashboardStats, STATUS_LABELS } from '../../types';
 import { 
@@ -26,6 +26,7 @@ interface DashboardViewProps {
   onNavigateWithFilter: (filter: 'all' | 'today' | 'active' | 'completed') => void;
   onAssignDriver?: (ride: Ride) => void;
   onOpenManageDrivers?: () => void;
+  onOpenManageAffiliates?: () => void;
   onOpenCompanyLogo?: () => void;
   onOpenAdminEmails?: () => void;
   onDeleteRide?: (ride: Ride) => Promise<boolean | void> | void;
@@ -42,6 +43,7 @@ export default function DashboardView({
   onNavigateWithFilter,
   onAssignDriver,
   onOpenManageDrivers,
+  onOpenManageAffiliates,
   onOpenCompanyLogo,
   onOpenAdminEmails,
   onDeleteRide,
@@ -197,9 +199,21 @@ export default function DashboardView({
             <button
               onClick={onOpenManageDrivers}
               className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-xs font-semibold shadow-2xs transition cursor-pointer"
+              title="Manage Fleet Drivers"
             >
               <User className="w-3.5 h-3.5 text-slate-600" />
               <span>Drivers</span>
+            </button>
+          )}
+
+          {onOpenManageAffiliates && (
+            <button
+              onClick={onOpenManageAffiliates}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-xs font-semibold shadow-2xs transition cursor-pointer"
+              title="Manage Affiliates & Partners"
+            >
+              <Handshake className="w-3.5 h-3.5 text-slate-600" />
+              <span>Affiliates</span>
             </button>
           )}
 

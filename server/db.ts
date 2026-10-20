@@ -104,9 +104,25 @@ export interface Ride {
   updatedAt: string;
   tokens: TrackingTokens;
   events: RideStatusEvent[];
+  rideDate?: string;
+  rideTime?: string;
+  affiliateName?: string;
+  affiliateId?: string;
   lastEmailDispatchedAt?: string;
   lastAssignedDriverIdForEmail?: string;
   emailDispatchStatus?: EmailDispatchRecord;
+}
+
+export interface Affiliate {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  company?: string;
+  notes?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface TokenMapping {
@@ -131,6 +147,7 @@ class RideDatabase {
   private events: Map<string, RideStatusEvent> = new Map();
   private tokens: Map<string, TokenMapping> = new Map();
   private drivers: Map<string, Driver> = new Map();
+  private affiliates: Map<string, Affiliate> = new Map();
   private sessions: Set<string> = new Set();
   private adminEmails: string[] = [process.env.ADMIN_EMAIL || 'hassanmehdi1444@gmail.com'];
   private branding: CompanyBranding = {
@@ -387,6 +404,39 @@ class RideDatabase {
   }
 
   /**
+   * Helper to sync an affiliate to Firestore
+   */
+  public async syncAffiliateToFirestore(affiliate: Affiliate): Promise<boolean> {
+    try {
+      const fsDb = getFirestoreServer();
+      if (!fsDb) return false;
+      const affRef = doc(fsDb, 'affiliates', affiliate.id);
+      const sanitized = sanitizeForFirestore(affiliate);
+      await setDoc(affRef, sanitized, { merge: true });
+      return true;
+    } catch (err) {
+      console.error(`[Database] Error saving affiliate ${affiliate.id} to Firestore:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to delete an affiliate from Firestore
+   */
+  public async deleteAffiliateFromFirestore(affiliateId: string): Promise<boolean> {
+    try {
+      const fsDb = getFirestoreServer();
+      if (!fsDb) return false;
+      const affRef = doc(fsDb, 'affiliates', affiliateId);
+      await deleteDoc(affRef);
+      return true;
+    } catch (err) {
+      console.error(`[Database] Error deleting affiliate ${affiliateId} from Firestore:`, err);
+      return false;
+    }
+  }
+
+  /**
    * Helper to write a ride to Supabase with error catching
    */
   public async syncRideToSupabase(ride: Ride): Promise<boolean> {
@@ -582,6 +632,64 @@ class RideDatabase {
       return true;
     } catch (err) {
       console.error(`[Database] Exception deleting driver ${driverId} from Supabase:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync an affiliate to Supabase
+   */
+  public async syncAffiliateToSupabase(affiliate: Affiliate): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      const row = {
+        id: affiliate.id,
+        name: affiliate.name,
+        phone: affiliate.phone || null,
+        email: affiliate.email || null,
+        company: affiliate.company || null,
+        notes: affiliate.notes || null,
+        active: affiliate.active,
+        created_at: affiliate.createdAt
+      };
+
+      let { error } = await supabase.from('affiliates').upsert(row, { onConflict: 'id' });
+      if (error && error.message.includes('Could not find the table')) {
+        // Fallback to storing in system_settings
+        const allAffiliates = Array.from(this.affiliates.values());
+        await supabase.from('system_settings').upsert({
+          key: 'affiliates',
+          value: { affiliates: allAffiliates },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Helper to delete an affiliate from Supabase
+   */
+  public async deleteAffiliateFromSupabase(affiliateId: string): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      let { error } = await supabase.from('affiliates').delete().eq('id', affiliateId);
+      if (error && error.message.includes('Could not find the table')) {
+        const allAffiliates = Array.from(this.affiliates.values());
+        await supabase.from('system_settings').upsert({
+          key: 'affiliates',
+          value: { affiliates: allAffiliates },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+      }
+      return true;
+    } catch {
       return false;
     }
   }
@@ -820,6 +928,39 @@ class RideDatabase {
         console.warn('[Database] Supabase drivers fetch note:', err);
       }
 
+      // 3.5. Fetch Affiliates
+      try {
+        let affiliatesData: any[] | null = null;
+        const resAff = await supabase.from('affiliates').select('*');
+        if (!resAff.error && Array.isArray(resAff.data)) {
+          affiliatesData = resAff.data;
+        } else {
+          const { data: affSettings } = await supabase.from('system_settings').select('value').eq('key', 'affiliates').single();
+          if (Array.isArray(affSettings?.value?.affiliates)) {
+            affiliatesData = affSettings.value.affiliates;
+          }
+        }
+
+        if (Array.isArray(affiliatesData) && affiliatesData.length > 0) {
+          for (const row of affiliatesData) {
+            const a: Affiliate = {
+              id: row.id,
+              name: row.name,
+              phone: row.phone || undefined,
+              email: row.email || undefined,
+              company: row.company || undefined,
+              notes: row.notes || undefined,
+              active: row.active !== undefined ? row.active : true,
+              createdAt: row.created_at || row.createdAt || new Date().toISOString()
+            };
+            this.affiliates.set(a.id, a);
+          }
+          console.log(`[Database] Synced ${affiliatesData.length} affiliates from Supabase.`);
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase affiliates fetch note:', err);
+      }
+
       // 4. Fetch Rides & Associated Status Events
       try {
         const [ridesRes, eventsRes] = await Promise.all([
@@ -967,6 +1108,7 @@ class RideDatabase {
         events: Array.from(this.events.entries()),
         tokens: Array.from(this.tokens.entries()),
         drivers: Array.from(this.drivers.entries()),
+        affiliates: Array.from(this.affiliates.entries()),
         sessions: Array.from(this.sessions),
         adminEmails: this.adminEmails,
         branding: this.branding
@@ -1019,6 +1161,7 @@ class RideDatabase {
         this.events = new Map(parsed.events || []);
         this.tokens = new Map(parsed.tokens || []);
         this.drivers = new Map(parsed.drivers || []);
+        this.affiliates = new Map(parsed.affiliates || []);
         this.sessions = new Set(parsed.sessions || []);
 
         if (Array.isArray(parsed.adminEmails) && parsed.adminEmails.length > 0) {
@@ -1122,6 +1265,7 @@ class RideDatabase {
     this.tokens = new Map();
     this.drivers = new Map();
     this.seedDefaultDrivers();
+    this.affiliates = new Map();
     this.sessions = new Set();
     this.adminEmails = [process.env.ADMIN_EMAIL || 'hassanmehdi1444@gmail.com'];
     this.branding = {
@@ -1496,6 +1640,88 @@ class RideDatabase {
       await Promise.all([
         this.deleteDriverFromSupabase(id),
         this.deleteDriverFromFirestore(id)
+      ]);
+    }
+    return deleted;
+  }
+
+  // Affiliate Operations
+  getAllAffiliates(): Affiliate[] {
+    return Array.from(this.affiliates.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getAffiliateById(id: string): Affiliate | null {
+    return this.affiliates.get(id) || null;
+  }
+
+  async createAffiliate(data: { name: string; phone?: string; email?: string; company?: string; notes?: string }): Promise<Affiliate> {
+    const id = `aff_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+    const affiliate: Affiliate = {
+      id,
+      name: data.name.trim(),
+      phone: data.phone?.trim() || undefined,
+      email: data.email?.trim() || undefined,
+      company: data.company?.trim() || undefined,
+      notes: data.notes?.trim() || undefined,
+      active: true,
+      createdAt: new Date().toISOString()
+    };
+    this.affiliates.set(id, affiliate);
+    this.persistToDisk();
+    await Promise.all([
+      this.syncAffiliateToSupabase(affiliate),
+      this.syncAffiliateToFirestore(affiliate)
+    ]);
+    return affiliate;
+  }
+
+  async updateAffiliate(id: string, data: Partial<Affiliate>): Promise<Affiliate | null> {
+    const affiliate = this.affiliates.get(id);
+    if (!affiliate) return null;
+
+    if (data.name !== undefined) affiliate.name = data.name.trim();
+    if (data.phone !== undefined) affiliate.phone = data.phone?.trim();
+    if (data.email !== undefined) affiliate.email = data.email?.trim();
+    if (data.company !== undefined) affiliate.company = data.company?.trim();
+    if (data.notes !== undefined) affiliate.notes = data.notes?.trim();
+    if (data.active !== undefined) affiliate.active = data.active;
+    affiliate.updatedAt = new Date().toISOString();
+
+    for (const ride of this.rides.values()) {
+      if (ride.affiliateId === id) {
+        if (data.name !== undefined) ride.affiliateName = affiliate.name;
+        await Promise.all([
+          this.syncRideToSupabase(ride),
+          this.syncRideToFirestore(ride)
+        ]);
+      }
+    }
+
+    this.persistToDisk();
+    await Promise.all([
+      this.syncAffiliateToSupabase(affiliate),
+      this.syncAffiliateToFirestore(affiliate)
+    ]);
+    return affiliate;
+  }
+
+  async deleteAffiliate(id: string): Promise<boolean> {
+    const deleted = this.affiliates.delete(id);
+    if (deleted) {
+      for (const ride of this.rides.values()) {
+        if (ride.affiliateId === id) {
+          ride.affiliateId = undefined;
+          ride.affiliateName = undefined;
+          await Promise.all([
+            this.syncRideToSupabase(ride),
+            this.syncRideToFirestore(ride)
+          ]);
+        }
+      }
+      this.persistToDisk();
+      await Promise.all([
+        this.deleteAffiliateFromSupabase(id),
+        this.deleteAffiliateFromFirestore(id)
       ]);
     }
     return deleted;

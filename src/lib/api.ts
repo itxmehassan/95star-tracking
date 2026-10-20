@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Driver, Ride } from '../types';
+import { Driver, Affiliate, Ride } from '../types';
 import { formatAmericanTime } from './timezone';
 
 const AUTH_TOKEN_KEY = 'ride_track_admin_session';
@@ -28,7 +28,7 @@ export function getApiBaseUrl(): string {
   return '';
 }
 
-export async function apiFetch<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export async function apiFetch<T = any>(endpoint: string, options: RequestInit = {}, retries: number = 2): Promise<T> {
   const token = getAdminToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -46,33 +46,48 @@ export async function apiFetch<T = any>(endpoint: string, options: RequestInit =
     ? endpoint
     : `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
-  const res = await fetch(fullUrl, {
-    cache: 'no-store',
-    ...options,
-    headers
-  });
+  let lastErr: any;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(fullUrl, {
+        cache: 'no-store',
+        ...options,
+        headers
+      });
 
-  const contentType = res.headers.get('content-type') || '';
-  if (!res.ok) {
-    let errMsg = `Request failed (${res.status})`;
-    if (contentType.includes('application/json')) {
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok) {
+        let errMsg = `Request failed (${res.status})`;
+        if (contentType.includes('application/json')) {
+          try {
+            const data = await res.json();
+            errMsg = data.error || errMsg;
+          } catch {}
+        }
+        throw new Error(errMsg);
+      }
+
+      if (contentType.includes('application/json')) {
+        return res.json();
+      }
+
       try {
-        const data = await res.json();
-        errMsg = data.error || errMsg;
-      } catch {}
+        return (await res.json()) as T;
+      } catch {
+        return {} as T;
+      }
+    } catch (err: any) {
+      lastErr = err;
+      // Retry transient network/fetch failures (e.g. server starting/reloading)
+      const isNetworkError = err instanceof TypeError || (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')));
+      if (isNetworkError && attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, 350 * Math.pow(2, attempt)));
+        continue;
+      }
+      throw err;
     }
-    throw new Error(errMsg);
   }
-
-  if (contentType.includes('application/json')) {
-    return res.json();
-  }
-
-  try {
-    return (await res.json()) as T;
-  } catch {
-    return {} as T;
-  }
+  throw lastErr;
 }
 
 export async function fetchDrivers(): Promise<Driver[]> {
@@ -119,6 +134,30 @@ export async function assignDriver(rideId: string, driverId?: string, driverName
   return apiFetch<{ success: boolean; ride: Ride }>(`/api/rides/${rideId}/driver`, {
     method: 'POST',
     body: JSON.stringify({ driverId, driverName, driverPhone })
+  });
+}
+
+export async function fetchAffiliates(): Promise<Affiliate[]> {
+  return apiFetch<Affiliate[]>('/api/affiliates');
+}
+
+export async function createAffiliate(data: { name: string; phone?: string; email?: string; company?: string; notes?: string }): Promise<Affiliate> {
+  return apiFetch<Affiliate>('/api/affiliates', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function updateAffiliate(id: string, data: Partial<Affiliate>): Promise<Affiliate> {
+  return apiFetch<Affiliate>(`/api/affiliates/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function deleteAffiliate(id: string): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(`/api/affiliates/${id}`, {
+    method: 'DELETE'
   });
 }
 

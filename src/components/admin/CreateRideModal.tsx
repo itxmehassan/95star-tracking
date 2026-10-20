@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles, Calendar, Clock, Tag } from 'lucide-react';
-import { apiFetch, fetchDrivers, createDriver as apiCreateDriver } from '../../lib/api';
+import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles, Calendar, Clock, Tag, Handshake, Building2 } from 'lucide-react';
+import { apiFetch, fetchDrivers, createDriver as apiCreateDriver, fetchAffiliates, createAffiliate as apiCreateAffiliate } from '../../lib/api';
 import { ClientStorage } from '../../lib/storage';
-import { Ride, Driver } from '../../types';
+import { Ride, Driver, Affiliate } from '../../types';
 
 interface CreateRideModalProps {
   onClose: () => void;
   onRideCreated: (ride: Ride) => void;
   onOpenManageDrivers?: () => void;
+  onOpenManageAffiliates?: () => void;
 }
 
-export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDrivers }: CreateRideModalProps) {
+export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDrivers, onOpenManageAffiliates }: CreateRideModalProps) {
   const [reservationId, setReservationId] = useState('');
   const [passengerName, setPassengerName] = useState('');
   const [passengerEmail, setPassengerEmail] = useState('');
@@ -21,9 +22,18 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
   const [rideDate, setRideDate] = useState('');
   const [rideTime, setRideTime] = useState('');
 
-  // Optional Affiliate Info
+  // Optional Affiliate Info & Selection
+  const [affiliates, setAffiliates] = useState<Affiliate[]>([]);
+  const [selectedAffiliateId, setSelectedAffiliateId] = useState('');
   const [affiliateName, setAffiliateName] = useState('');
   const [affiliateId, setAffiliateId] = useState('');
+  const [loadingAffiliates, setLoadingAffiliates] = useState(false);
+  const [showInlineAddAffiliate, setShowInlineAddAffiliate] = useState(false);
+  const [newAffiliateName, setNewAffiliateName] = useState('');
+  const [newAffiliateCompany, setNewAffiliateCompany] = useState('');
+  const [newAffiliatePhone, setNewAffiliatePhone] = useState('');
+  const [newAffiliateEmail, setNewAffiliateEmail] = useState('');
+  const [savingAffiliate, setSavingAffiliate] = useState(false);
 
   // Centralized Drivers Collection State
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -52,7 +62,6 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
       ClientStorage.saveLocalDrivers(list || []);
     } catch (err) {
       console.error('Failed to load drivers from database:', err);
-      // Fallback to local storage
       const local = ClientStorage.getLocalDrivers();
       if (local && local.length > 0) {
         setDrivers(local);
@@ -62,8 +71,27 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
     }
   };
 
+  // Load Affiliates from Centralized Collection
+  const loadAffiliatesList = async () => {
+    try {
+      setLoadingAffiliates(true);
+      const list = await fetchAffiliates();
+      setAffiliates(list || []);
+      ClientStorage.saveLocalAffiliates(list || []);
+    } catch (err) {
+      console.error('Failed to load affiliates from database:', err);
+      const local = ClientStorage.getLocalAffiliates();
+      if (local && local.length > 0) {
+        setAffiliates(local);
+      }
+    } finally {
+      setLoadingAffiliates(false);
+    }
+  };
+
   useEffect(() => {
     loadDriversList();
+    loadAffiliatesList();
   }, []);
 
   // Quick Add Driver to Centralized Database Collection
@@ -105,6 +133,60 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
       setError(err.message || 'Failed to save driver to database collection.');
     } finally {
       setSavingDriver(false);
+    }
+  };
+
+  const handleSelectAffiliate = (id: string) => {
+    setSelectedAffiliateId(id);
+    if (!id) {
+      setAffiliateName('');
+      setAffiliateId('');
+      return;
+    }
+    const match = affiliates.find(a => a.id === id);
+    if (match) {
+      setAffiliateName(match.name);
+      setAffiliateId(match.id);
+    }
+  };
+
+  const handleSaveNewAffiliateToCollection = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newAffiliateName.trim()) {
+      setError('Affiliate name is required.');
+      return;
+    }
+
+    setSavingAffiliate(true);
+    setError(null);
+
+    try {
+      const created = await apiCreateAffiliate({
+        name: newAffiliateName.trim(),
+        company: newAffiliateCompany.trim() || undefined,
+        phone: newAffiliatePhone.trim() || undefined,
+        email: newAffiliateEmail.trim() || undefined
+      });
+
+      const updatedList = [...affiliates.filter(a => a.id !== created.id), created];
+      setAffiliates(updatedList);
+      ClientStorage.saveLocalAffiliates(updatedList);
+
+      // Auto-select in form
+      setSelectedAffiliateId(created.id);
+      setAffiliateName(created.name);
+      setAffiliateId(created.id);
+
+      // Reset inline form
+      setShowInlineAddAffiliate(false);
+      setNewAffiliateName('');
+      setNewAffiliateCompany('');
+      setNewAffiliatePhone('');
+      setNewAffiliateEmail('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save affiliate to database.');
+    } finally {
+      setSavingAffiliate(false);
     }
   };
 
@@ -355,41 +437,166 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
             </div>
           </div>
 
-          {/* Optional Affiliate Name & ID */}
+          {/* 3b. Centralized Affiliate Collection Dropdown & Quick Add */}
           <div className="pt-2 border-t border-slate-100">
-            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-              Affiliate Information (Optional)
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate Name</span>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Tag className="w-3.5 h-3.5" />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                Affiliate / Partner (Optional)
+              </label>
+              <div className="flex items-center gap-2">
+                {!showInlineAddAffiliate && (
+                  <button
+                    type="button"
+                    onClick={() => setShowInlineAddAffiliate(true)}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ Add Affiliate</span>
+                  </button>
+                )}
+                {onOpenManageAffiliates && (
+                  <button
+                    type="button"
+                    onClick={onOpenManageAffiliates}
+                    className="text-[11px] font-medium text-slate-500 hover:text-slate-800 cursor-pointer"
+                  >
+                    Manage Affiliates
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Add Affiliate Drawer */}
+            {showInlineAddAffiliate ? (
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5 text-xs animate-in fade-in duration-100 mb-3">
+                <div className="flex items-center justify-between border-b border-slate-200/60 pb-2">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                    <Handshake className="w-3.5 h-3.5 text-slate-700" />
+                    <span>Add Affiliate to Centralized Registry</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowInlineAddAffiliate(false)}
+                    className="text-slate-400 hover:text-slate-700 text-[11px] cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     type="text"
-                    value={affiliateName}
-                    onChange={(e) => setAffiliateName(e.target.value)}
-                    placeholder="e.g. VIP Limos Network"
-                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                    placeholder="Affiliate / Partner Name *"
+                    value={newAffiliateName}
+                    onChange={(e) => setNewAffiliateName(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
                   />
+                  <input
+                    type="text"
+                    placeholder="Company / Org Name (Optional)"
+                    value={newAffiliateCompany}
+                    onChange={(e) => setNewAffiliateCompany(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Contact Phone (Optional)"
+                    value={newAffiliatePhone}
+                    onChange={(e) => setNewAffiliatePhone(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                  />
+                  <input
+                    type="email"
+                    placeholder="Dispatch Email (Optional)"
+                    value={newAffiliateEmail}
+                    onChange={(e) => setNewAffiliateEmail(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-slate-900"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-200/50">
+                  <button
+                    type="button"
+                    onClick={() => setShowInlineAddAffiliate(false)}
+                    className="px-2.5 py-1 text-[11px] text-slate-600 hover:text-slate-900 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingAffiliate}
+                    onClick={handleSaveNewAffiliateToCollection}
+                    className="px-3 py-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[11px] font-semibold rounded-lg shadow-2xs transition cursor-pointer flex items-center gap-1"
+                  >
+                    <Check className="w-3 h-3" />
+                    <span>{savingAffiliate ? 'Saving...' : 'Save & Select Affiliate'}</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Affiliate Dropdown Selection */}
+            <div className="space-y-2">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Handshake className="w-4 h-4" />
+                </div>
+                <select
+                  value={selectedAffiliateId}
+                  onChange={(e) => handleSelectAffiliate(e.target.value)}
+                  disabled={loadingAffiliates}
+                  className="w-full pl-10 pr-8 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition appearance-none cursor-pointer"
+                >
+                  <option value="">-- Select Registered Affiliate (Optional) --</option>
+                  {affiliates.map((aff) => (
+                    <option key={aff.id} value={aff.id}>
+                      {aff.name} {aff.company ? `(${aff.company})` : ''} - ID: {aff.id}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
+                  <span className="text-[10px]">▼</span>
                 </div>
               </div>
 
-              <div>
-                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate ID</span>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <Hash className="w-3.5 h-3.5" />
+              {/* Editable Name & ID Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate Name</span>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Tag className="w-3.5 h-3.5" />
+                    </div>
+                    <input
+                      type="text"
+                      value={affiliateName}
+                      onChange={(e) => {
+                        setAffiliateName(e.target.value);
+                        if (!e.target.value) setSelectedAffiliateId('');
+                      }}
+                      placeholder="e.g. Royal Chauffeur Network"
+                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={affiliateId}
-                    onChange={(e) => setAffiliateId(e.target.value)}
-                    placeholder="e.g. AFF-1049"
-                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
-                  />
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 mb-1 block">Affiliate ID</span>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Hash className="w-3.5 h-3.5" />
+                    </div>
+                    <input
+                      type="text"
+                      value={affiliateId}
+                      onChange={(e) => {
+                        setAffiliateId(e.target.value);
+                        if (!e.target.value) setSelectedAffiliateId('');
+                      }}
+                      placeholder="e.g. AFF-1049"
+                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                    />
+                  </div>
                 </div>
               </div>
             </div>

@@ -10,6 +10,7 @@ import CreateRideModal from './components/admin/CreateRideModal';
 import GeneratedLinksModal from './components/admin/GeneratedLinksModal';
 import RideDetailsModal from './components/admin/RideDetailsModal';
 import ManageDriversModal from './components/admin/ManageDriversModal';
+import ManageAffiliatesModal from './components/admin/ManageAffiliatesModal';
 import AssignDriverModal from './components/admin/AssignDriverModal';
 import CompanyLogoModal from './components/admin/CompanyLogoModal';
 import AdminEmailsModal from './components/admin/AdminEmailsModal';
@@ -38,6 +39,7 @@ export default function App() {
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isManageDriversOpen, setIsManageDriversOpen] = useState(false);
+  const [isManageAffiliatesOpen, setIsManageAffiliatesOpen] = useState(false);
   const [isCompanyLogoModalOpen, setIsCompanyLogoModalOpen] = useState(false);
   const [isManageAdminEmailsOpen, setIsManageAdminEmailsOpen] = useState(false);
   const [assignDriverRide, setAssignDriverRide] = useState<Ride | null>(null);
@@ -107,7 +109,17 @@ export default function App() {
         completedRides: statsRes.completedRides
       });
     } catch (err) {
-      console.error('[Ride-Diagnostics][Frontend] Failed to load admin data:', err);
+      console.warn('[Ride-Diagnostics][Frontend] Could not reach server for admin data (falling back to client vault):', err);
+      const localCached = ClientStorage.getLocalRides();
+      if (localCached && localCached.length > 0) {
+        setRides(localCached);
+        setStats({
+          totalRides: localCached.length,
+          todayRides: localCached.length,
+          activeRides: localCached.filter(r => r.currentStatus !== 'done').length,
+          completedRides: localCached.filter(r => r.currentStatus === 'done').length
+        });
+      }
     }
   };
 
@@ -233,6 +245,7 @@ export default function App() {
         }}
         onOpenCreateRide={() => setIsCreateModalOpen(true)}
         onOpenManageDrivers={() => setIsManageDriversOpen(true)}
+        onOpenManageAffiliates={() => setIsManageAffiliatesOpen(true)}
         onOpenCompanyLogo={() => setIsCompanyLogoModalOpen(true)}
         onOpenAdminEmails={() => setIsManageAdminEmailsOpen(true)}
         onLogout={() => {
@@ -250,6 +263,7 @@ export default function App() {
             rides={rides}
             onOpenCreateRide={() => setIsCreateModalOpen(true)}
             onOpenManageDrivers={() => setIsManageDriversOpen(true)}
+            onOpenManageAffiliates={() => setIsManageAffiliatesOpen(true)}
             onOpenCompanyLogo={() => setIsCompanyLogoModalOpen(true)}
             onOpenAdminEmails={() => setIsManageAdminEmailsOpen(true)}
             onViewRide={(ride) => setSelectedRideDetails(ride)}
@@ -297,13 +311,17 @@ export default function App() {
         )}
       </main>
 
-      {/* 1. Create Ride Modal (with Driver Dropdown & Quick Add Driver) */}
+      {/* 1. Create Ride Modal (with Driver Dropdown & Quick Add Driver & Affiliate Selector) */}
       {isCreateModalOpen && (
         <CreateRideModal
           onClose={() => setIsCreateModalOpen(false)}
           onOpenManageDrivers={() => {
             setIsCreateModalOpen(false);
             setIsManageDriversOpen(true);
+          }}
+          onOpenManageAffiliates={() => {
+            setIsCreateModalOpen(false);
+            setIsManageAffiliatesOpen(true);
           }}
           onRideCreated={(newRide) => {
             console.log(`[Ride-Diagnostics][Frontend] onRideCreated: #${newRide.reservationId} (ID: ${newRide.id})`);
@@ -327,6 +345,14 @@ export default function App() {
         <ManageDriversModal
           onClose={() => setIsManageDriversOpen(false)}
           onDriversUpdated={fetchAdminData}
+        />
+      )}
+
+      {/* 2b. Manage Affiliates Modal */}
+      {isManageAffiliatesOpen && (
+        <ManageAffiliatesModal
+          onClose={() => setIsManageAffiliatesOpen(false)}
+          onAffiliatesUpdated={fetchAdminData}
         />
       )}
 

@@ -1,8 +1,9 @@
-import { Ride, Driver, CompanyBranding } from '../types';
+import { Ride, Driver, Affiliate, CompanyBranding } from '../types';
 import { apiFetch } from './api';
 
 const RIDES_STORAGE_KEY = '95star_rides_permanent_vault';
 const DRIVERS_STORAGE_KEY = '95star_drivers_permanent_vault';
+const AFFILIATES_STORAGE_KEY = '95star_affiliates_permanent_vault';
 const BRANDING_STORAGE_KEY = '95star_branding_permanent_vault';
 
 export const ClientStorage = {
@@ -113,6 +114,47 @@ export const ClientStorage = {
       if (Array.isArray(drivers)) {
         localStorage.setItem(DRIVERS_STORAGE_KEY, JSON.stringify(drivers));
       }
+    } catch (e) {}
+  },
+
+  // Affiliates
+  getLocalAffiliates(): Affiliate[] {
+    try {
+      const data = localStorage.getItem(AFFILIATES_STORAGE_KEY);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  },
+
+  saveLocalAffiliates(affiliates: Affiliate[]) {
+    try {
+      if (Array.isArray(affiliates)) {
+        localStorage.setItem(AFFILIATES_STORAGE_KEY, JSON.stringify(affiliates));
+      }
+    } catch (e) {}
+  },
+
+  saveSingleAffiliate(affiliate: Affiliate) {
+    try {
+      const existing = this.getLocalAffiliates();
+      const index = existing.findIndex(a => a.id === affiliate.id);
+      if (index >= 0) {
+        existing[index] = affiliate;
+      } else {
+        existing.push(affiliate);
+      }
+      this.saveLocalAffiliates(existing);
+    } catch (e) {}
+  },
+
+  removeLocalAffiliate(affiliateId: string) {
+    try {
+      const existing = this.getLocalAffiliates();
+      const filtered = existing.filter(a => a.id !== affiliateId);
+      this.saveLocalAffiliates(filtered);
     } catch (e) {}
   },
 
