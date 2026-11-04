@@ -512,25 +512,129 @@ async function startServer() {
     res.json(status);
   });
 
-  app.post('/api/admin/emails/test', requireAdminAuth, async (req: Request, res: Response) => {
-    const { targetEmail, templateType } = req.body as {
-      targetEmail: string;
-      templateType?: 'driver' | 'passenger' | 'admin';
-    };
+  // ==========================================
+  // EMAIL NOTIFICATION SETTINGS & AUDIT LOGS
+  // ==========================================
+  app.get('/api/email-settings', requireAdminAuth, (_req: Request, res: Response) => {
+    const settings = db.getEmailNotificationSettings();
+    const status = getEmailServiceStatus();
+    res.json({
+      settings,
+      adminEmails: db.getAdminEmails(),
+      serviceStatus: {
+        isConfigured: status.isConfigured,
+        fromEmail: status.fromEmail,
+        mode: status.mode
+      },
+      isConfigured: status.isConfigured,
+      fromEmail: status.fromEmail,
+      mode: status.mode
+    });
+  });
 
-    if (!targetEmail || !targetEmail.trim() || !targetEmail.includes('@')) {
+  app.post('/api/email-settings', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const { admin, customer, driver, affiliate } = req.body;
+      const updated = await db.updateEmailNotificationSettings({
+        admin: admin !== undefined ? Boolean(admin) : undefined,
+        customer: customer !== undefined ? Boolean(customer) : undefined,
+        driver: driver !== undefined ? Boolean(driver) : undefined,
+        affiliate: affiliate !== undefined ? Boolean(affiliate) : undefined
+      });
+      res.json({ success: true, settings: updated });
+    } catch (err: any) {
+      console.error('[API Update Email Settings Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to update email notification settings' });
+    }
+  });
+
+  app.put('/api/email-settings', requireAdminAuth, async (req: Request, res: Response) => {
+    try {
+      const { admin, customer, driver, affiliate } = req.body;
+      const updated = await db.updateEmailNotificationSettings({
+        admin: admin !== undefined ? Boolean(admin) : undefined,
+        customer: customer !== undefined ? Boolean(customer) : undefined,
+        driver: driver !== undefined ? Boolean(driver) : undefined,
+        affiliate: affiliate !== undefined ? Boolean(affiliate) : undefined
+      });
+      res.json({ success: true, settings: updated });
+    } catch (err: any) {
+      console.error('[API Update Email Settings Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to update email notification settings' });
+    }
+  });
+
+  app.get('/api/email-logs', requireAdminAuth, (req: Request, res: Response) => {
+    const limit = parseInt(req.query.limit as string) || 100;
+    const logs = db.getEmailLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
+  });
+
+  app.post('/api/admin/emails/test', requireAdminAuth, async (req: Request, res: Response) => {
+    const rawTarget = req.body.targetEmail || req.body.email || '';
+    const templateType = req.body.templateType as 'driver' | 'passenger' | 'customer' | 'admin' | 'affiliate';
+
+    if (!rawTarget || !String(rawTarget).trim() || !String(rawTarget).includes('@')) {
       return res.status(400).json({ error: 'Valid target email address is required.' });
     }
 
     const branding = db.getBranding();
     const baseUrl = getBaseUrl(req);
+    const targetEmail = String(rawTarget).trim().toLowerCase();
 
     try {
       const result = await sendTestEmail({
-        targetEmail: targetEmail.trim().toLowerCase(),
+        targetEmail,
         templateType: templateType || 'admin',
         branding,
         baseUrl
+      });
+
+      await db.addEmailLog({
+        rideId: 'TEST-DISPATCH',
+        reservationId: 'TEST',
+        recipientType: (templateType === 'passenger' ? 'customer' : (templateType || 'admin')) as any,
+        recipientEmail: targetEmail,
+        status: result.success ? 'sent' : 'failed',
+        messageId: result.messageId,
+        error: result.error
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[API Test Email Error]', err);
+      res.status(500).json({ error: err.message || 'Failed to dispatch test email.' });
+    }
+  });
+
+  app.post('/api/email-settings/test', requireAdminAuth, async (req: Request, res: Response) => {
+    const rawTarget = req.body.targetEmail || req.body.email || '';
+    const templateType = req.body.templateType as 'driver' | 'passenger' | 'customer' | 'admin' | 'affiliate';
+
+    if (!rawTarget || !String(rawTarget).trim() || !String(rawTarget).includes('@')) {
+      return res.status(400).json({ error: 'Valid target email address is required.' });
+    }
+
+    const branding = db.getBranding();
+    const baseUrl = getBaseUrl(req);
+    const targetEmail = String(rawTarget).trim().toLowerCase();
+
+    try {
+      const result = await sendTestEmail({
+        targetEmail,
+        templateType: templateType || 'admin',
+        branding,
+        baseUrl
+      });
+
+      await db.addEmailLog({
+        rideId: 'TEST-DISPATCH',
+        reservationId: 'TEST',
+        recipientType: (templateType === 'passenger' ? 'customer' : (templateType || 'admin')) as any,
+        recipientEmail: targetEmail,
+        status: result.success ? 'sent' : 'failed',
+        messageId: result.messageId,
+        error: result.error
       });
 
       res.json(result);
@@ -574,7 +678,11 @@ async function startServer() {
         rideDate,
         rideTime,
         affiliateName,
-        affiliateId
+        affiliateId,
+        affiliateEmail,
+        pickupLocation,
+        dropoffLocation,
+        emailOverrides
       } = req.body;
 
       if (!reservationId || !String(reservationId).trim() || !passengerName || !String(passengerName).trim() || !passengerEmail || !String(passengerEmail).trim()) {
@@ -597,7 +705,10 @@ async function startServer() {
         rideDate: rideDate ? String(rideDate).trim() : undefined,
         rideTime: rideTime ? String(rideTime).trim() : undefined,
         affiliateName: affiliateName ? String(affiliateName).trim() : undefined,
-        affiliateId: affiliateId ? String(affiliateId).trim() : undefined
+        affiliateId: affiliateId ? String(affiliateId).trim() : undefined,
+        affiliateEmail: affiliateEmail ? String(affiliateEmail).trim() : undefined,
+        pickupLocation: pickupLocation ? String(pickupLocation).trim() : undefined,
+        dropoffLocation: dropoffLocation ? String(dropoffLocation).trim() : undefined
       });
 
       // Verify ride existence in database
@@ -610,30 +721,45 @@ async function startServer() {
 
       realtime.broadcastNewRide(verified);
 
-      // If driver was assigned upon creation, dispatch tracking emails
-      if (verified.driverId) {
-        const assignedDriver = db.getAllDrivers().find(d => d.id === verified.driverId) || null;
+      // Automated Transactional Email Notification System (Resend)
+      // Dispatches separate emails to Admin, Customer, Driver, and Affiliate according to global toggles & per-ride overrides
+      // Failures never crash or block ride creation
+      try {
+        const globalSettings = db.getEmailNotificationSettings();
+        const effectiveToggles = {
+          admin: emailOverrides?.admin !== undefined ? Boolean(emailOverrides.admin) : globalSettings.admin,
+          customer: emailOverrides?.customer !== undefined ? Boolean(emailOverrides.customer) : globalSettings.customer,
+          driver: emailOverrides?.driver !== undefined ? Boolean(emailOverrides.driver) : globalSettings.driver,
+          affiliate: emailOverrides?.affiliate !== undefined ? Boolean(emailOverrides.affiliate) : globalSettings.affiliate
+        };
+
+        const assignedDriver = verified.driverId ? (db.getAllDrivers().find(d => d.id === verified.driverId) || null) : null;
+        const assignedAffiliate = verified.affiliateId ? db.getAffiliateById(verified.affiliateId) : null;
         const adminEmails = db.getAdminEmails();
         const branding = db.getBranding();
         const baseUrl = getBaseUrl(req);
 
-        try {
-          const emailResult = await dispatchRideTrackingEmails({
-            ride: verified,
-            driver: assignedDriver,
-            adminEmails,
-            branding,
-            baseUrl
-          });
+        const emailResult = await dispatchRideTrackingEmails({
+          ride: verified,
+          driver: assignedDriver,
+          affiliate: assignedAffiliate,
+          adminEmails,
+          branding,
+          baseUrl,
+          toggles: effectiveToggles,
+          isInitialCreation: true,
+          onLogEntry: (entry) => {
+            db.addEmailLog(entry);
+          }
+        });
 
-          await db.recordEmailDispatch(verified.id, {
-            sentAt: new Date().toISOString(),
-            driverName: verified.driverName,
-            recipients: emailResult.recipients
-          }, verified.driverId);
-        } catch (emailErr) {
-          console.error('[Email Dispatch] Background error on ride creation:', emailErr);
-        }
+        await db.recordEmailDispatch(verified.id, {
+          sentAt: new Date().toISOString(),
+          driverName: verified.driverName,
+          recipients: emailResult.recipients
+        }, verified.driverId);
+      } catch (emailErr) {
+        console.error('[Email Dispatch] Background error on ride creation (non-fatal):', emailErr);
       }
 
       const finalRide = db.getRideById(verified.id) || verified;
@@ -686,17 +812,24 @@ async function startServer() {
     // Automatic email dispatch immediately after driver is assigned
     if (result.ride.driverId) {
       const assignedDriver = db.getAllDrivers().find(d => d.id === result.ride?.driverId) || null;
+      const assignedAffiliate = result.ride.affiliateId ? (db.getAllAffiliates().find(a => a.id === result.ride?.affiliateId) || null) : null;
       const adminEmails = db.getAdminEmails();
       const branding = db.getBranding();
       const baseUrl = getBaseUrl(req);
+      const toggles = db.getEmailNotificationSettings();
 
       try {
         emailResult = await dispatchRideTrackingEmails({
           ride: result.ride,
           driver: assignedDriver,
+          affiliate: assignedAffiliate,
           adminEmails,
           branding,
-          baseUrl
+          baseUrl,
+          toggles,
+          onLogEntry: (entry) => {
+            void db.addEmailLog(entry);
+          }
         });
 
         await db.recordEmailDispatch(result.ride.id, {
@@ -745,17 +878,24 @@ async function startServer() {
     }
 
     const assignedDriver = ride.driverId ? (db.getAllDrivers().find(d => d.id === ride.driverId) || null) : null;
+    const assignedAffiliate = ride.affiliateId ? (db.getAllAffiliates().find(a => a.id === ride.affiliateId) || null) : null;
     const adminEmails = db.getAdminEmails();
     const branding = db.getBranding();
     const baseUrl = getBaseUrl(req);
+    const toggles = db.getEmailNotificationSettings();
 
     try {
       const emailResult = await dispatchRideTrackingEmails({
         ride,
         driver: assignedDriver,
+        affiliate: assignedAffiliate,
         adminEmails,
         branding,
-        baseUrl
+        baseUrl,
+        toggles,
+        onLogEntry: (entry) => {
+          void db.addEmailLog(entry);
+        }
       });
 
       await db.recordEmailDispatch(ride.id, {

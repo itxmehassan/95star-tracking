@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Driver, Affiliate, Ride } from '../types';
+import { Driver, Affiliate, Ride, EmailNotificationSettings, EmailLogEntry } from '../types';
 import { formatAmericanTime } from './timezone';
 
 const AUTH_TOKEN_KEY = 'ride_track_admin_session';
@@ -158,6 +158,60 @@ export async function updateAffiliate(id: string, data: Partial<Affiliate>): Pro
 export async function deleteAffiliate(id: string): Promise<{ success: boolean }> {
   return apiFetch<{ success: boolean }>(`/api/affiliates/${id}`, {
     method: 'DELETE'
+  });
+}
+
+export async function fetchEmailSettings(): Promise<{
+  settings: EmailNotificationSettings;
+  adminEmails: string[];
+  serviceStatus: { isConfigured: boolean; fromEmail: string; mode: string };
+}> {
+  return apiFetch<{
+    settings: EmailNotificationSettings;
+    adminEmails: string[];
+    serviceStatus: { isConfigured: boolean; fromEmail: string; mode: string };
+  }>('/api/email-settings');
+}
+
+export async function updateEmailSettings(settings: Partial<EmailNotificationSettings>): Promise<{
+  success: boolean;
+  settings: EmailNotificationSettings;
+}> {
+  return apiFetch<{
+    success: boolean;
+    settings: EmailNotificationSettings;
+  }>('/api/email-settings', {
+    method: 'POST',
+    body: JSON.stringify(settings)
+  });
+}
+
+export async function fetchEmailLogs(limit: number = 100): Promise<{
+  success: boolean;
+  count: number;
+  logs: EmailLogEntry[];
+}> {
+  return apiFetch<{
+    success: boolean;
+    count: number;
+    logs: EmailLogEntry[];
+  }>(`/api/email-logs?limit=${limit}`);
+}
+
+export async function sendTestEmailMessage(targetEmail: string, templateType?: string): Promise<{
+  success: boolean;
+  messageId?: string;
+  error?: string;
+  message?: string;
+}> {
+  return apiFetch<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+    message?: string;
+  }>('/api/admin/emails/test', {
+    method: 'POST',
+    body: JSON.stringify({ email: targetEmail, templateType })
   });
 }
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles, Calendar, Clock, Tag, Handshake, Building2 } from 'lucide-react';
-import { apiFetch, fetchDrivers, createDriver as apiCreateDriver, fetchAffiliates, createAffiliate as apiCreateAffiliate } from '../../lib/api';
+import { X, Hash, User, Mail, Plus, Car, Phone, UserPlus, ShieldCheck, Check, Sparkles, Calendar, Clock, Tag, Handshake, Building2, MapPin, Bell } from 'lucide-react';
+import { apiFetch, fetchDrivers, createDriver as apiCreateDriver, fetchAffiliates, createAffiliate as apiCreateAffiliate, fetchEmailSettings } from '../../lib/api';
 import { ClientStorage } from '../../lib/storage';
 import { Ride, Driver, Affiliate } from '../../types';
 
@@ -21,6 +21,23 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
   // Optional Ride Date & Time
   const [rideDate, setRideDate] = useState('');
   const [rideTime, setRideTime] = useState('');
+
+  // Optional Pickup & Dropoff Route Details
+  const [pickupLocation, setPickupLocation] = useState('');
+  const [dropoffLocation, setDropoffLocation] = useState('');
+
+  // Per-Ride Email Notification Controls (defaulted from global settings)
+  const [emailOverrides, setEmailOverrides] = useState<{
+    admin: boolean;
+    customer: boolean;
+    driver: boolean;
+    affiliate: boolean;
+  }>({
+    admin: true,
+    customer: true,
+    driver: true,
+    affiliate: true
+  });
 
   // Optional Affiliate Info & Selection
   const [affiliates, setAffiliates] = useState<Affiliate[]>([]);
@@ -92,6 +109,20 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
   useEffect(() => {
     loadDriversList();
     loadAffiliatesList();
+
+    // Load global email notification toggles to set defaults for this ride
+    fetchEmailSettings().then(res => {
+      if (res && res.settings) {
+        setEmailOverrides({
+          admin: res.settings.admin ?? true,
+          customer: res.settings.customer ?? true,
+          driver: res.settings.driver ?? true,
+          affiliate: res.settings.affiliate ?? true
+        });
+      }
+    }).catch(err => {
+      console.warn('Could not pre-load email settings:', err);
+    });
   }, []);
 
   // Quick Add Driver to Centralized Database Collection
@@ -244,8 +275,11 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
           driverPhone: selectedDriver?.phone || undefined,
           rideDate: rideDate.trim() || undefined,
           rideTime: rideTime.trim() || undefined,
+          pickupLocation: pickupLocation.trim() || undefined,
+          dropoffLocation: dropoffLocation.trim() || undefined,
           affiliateName: affiliateName.trim() || undefined,
-          affiliateId: affiliateId.trim() || undefined
+          affiliateId: affiliateId.trim() || undefined,
+          emailOverrides
         })
       });
 
@@ -431,6 +465,46 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
                     value={rideTime}
                     onChange={(e) => setRideTime(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Optional Pickup & Drop-off Locations */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+              Pickup & Drop-off Locations (Optional)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Pickup Location</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <MapPin className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={pickupLocation}
+                    onChange={(e) => setPickupLocation(e.target.value)}
+                    placeholder="e.g. JFK Airport Terminal 4"
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[11px] font-medium text-slate-500 mb-1 block">Drop-off Location</span>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <MapPin className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="text"
+                    value={dropoffLocation}
+                    onChange={(e) => setDropoffLocation(e.target.value)}
+                    placeholder="e.g. Manhattan Hotel Suite"
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
                   />
                 </div>
               </div>
@@ -779,6 +853,60 @@ export default function CreateRideModal({ onClose, onRideCreated, onOpenManageDr
                 )}
               </div>
             )}
+          </div>
+
+          {/* Per-Ride Email Notification Controls */}
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Bell className="w-3.5 h-3.5 text-slate-700" />
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  Email Notifications (Per-Ride Controls)
+                </label>
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Default from Dashboard Settings
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-500 mb-2.5">
+              Select which recipients will automatically receive their secure tracking links for this ride:
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {([
+                { key: 'admin', label: 'Admin', desc: 'Monitor Link' },
+                { key: 'customer', label: 'Customer', desc: 'Live Tracker' },
+                { key: 'driver', label: 'Driver', desc: 'Control Link' },
+                { key: 'affiliate', label: 'Affiliate', desc: 'Partner Link' }
+              ] as const).map(({ key, label, desc }) => {
+                const isActive = emailOverrides[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setEmailOverrides(prev => ({ ...prev, [key]: !prev[key] }))}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      isActive
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                        : 'bg-slate-50 text-slate-400 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-xs font-bold">{label}</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full uppercase ${
+                        isActive ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        {isActive ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                    <span className={`text-[10px] mt-1 ${isActive ? 'text-slate-300' : 'text-slate-400'}`}>
+                      {desc}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Action Buttons */}

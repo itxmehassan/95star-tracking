@@ -78,15 +78,38 @@ export interface TrackingTokens {
 
 export interface EmailRecipientStatus {
   email: string;
-  role: 'driver' | 'passenger' | 'admin';
+  role: 'driver' | 'passenger' | 'customer' | 'admin' | 'affiliate';
   success: boolean;
+  status?: 'sent' | 'failed' | 'skipped';
+  messageId?: string;
   error?: string;
+  timestamp?: string;
 }
 
 export interface EmailDispatchRecord {
   sentAt: string;
   driverName?: string;
   recipients: EmailRecipientStatus[];
+}
+
+export interface EmailNotificationSettings {
+  admin: boolean;
+  customer: boolean;
+  driver: boolean;
+  affiliate: boolean;
+  updatedAt?: string;
+}
+
+export interface EmailLogEntry {
+  id: string;
+  rideId: string;
+  reservationId: string;
+  recipientType: 'admin' | 'customer' | 'driver' | 'affiliate';
+  recipientEmail: string;
+  status: 'sent' | 'failed' | 'skipped';
+  messageId?: string;
+  error?: string;
+  timestamp: string;
 }
 
 export interface Ride {
@@ -106,8 +129,11 @@ export interface Ride {
   events: RideStatusEvent[];
   rideDate?: string;
   rideTime?: string;
+  pickupLocation?: string;
+  dropoffLocation?: string;
   affiliateName?: string;
   affiliateId?: string;
+  affiliateEmail?: string;
   lastEmailDispatchedAt?: string;
   lastAssignedDriverIdForEmail?: string;
   emailDispatchStatus?: EmailDispatchRecord;
@@ -157,6 +183,14 @@ class RideDatabase {
     timeZone: process.env.APP_TIMEZONE || 'America/New_York',
     updatedAt: new Date().toISOString()
   };
+  private emailNotificationSettings: EmailNotificationSettings = {
+    admin: true,
+    customer: true,
+    driver: true,
+    affiliate: true,
+    updatedAt: new Date().toISOString()
+  };
+  private emailLogs: EmailLogEntry[] = [];
   
   private dataDir = path.join(process.cwd(), 'data');
   private dbFilePath = path.join(process.cwd(), 'data', 'rides_db.json');
@@ -244,6 +278,29 @@ class RideDatabase {
         }
       } catch (err) {
         console.warn('[Database] Firestore admin emails sync error:', err);
+      }
+
+      // 2.5. Fetch Email Notification Settings from Cloud Firestore
+      try {
+        const notifRef = doc(fsDb, 'settings', 'email_notifications');
+        const notifDoc = await getDoc(notifRef);
+        if (notifDoc.exists()) {
+          const data = notifDoc.data() as EmailNotificationSettings;
+          if (data) {
+            this.emailNotificationSettings = {
+              admin: data.admin !== undefined ? Boolean(data.admin) : true,
+              customer: data.customer !== undefined ? Boolean(data.customer) : true,
+              driver: data.driver !== undefined ? Boolean(data.driver) : true,
+              affiliate: data.affiliate !== undefined ? Boolean(data.affiliate) : true,
+              updatedAt: data.updatedAt || new Date().toISOString()
+            };
+            console.log('[Database] Synced Email Notification Settings from Firestore:', this.emailNotificationSettings);
+          }
+        } else {
+          await setDoc(notifRef, sanitizeForFirestore(this.emailNotificationSettings));
+        }
+      } catch (err) {
+        console.warn('[Database] Firestore email notification settings sync note:', err);
       }
 
       // 3. Fetch Drivers from Cloud Firestore
@@ -803,6 +860,83 @@ class RideDatabase {
   }
 
   /**
+   * Helper to sync email notification settings to Firestore
+   */
+  public async syncEmailSettingsToFirestore(settings: EmailNotificationSettings): Promise<boolean> {
+    try {
+      const fsDb = getFirestoreServer();
+      if (!fsDb) return false;
+      const notifRef = doc(fsDb, 'settings', 'email_notifications');
+      await setDoc(notifRef, sanitizeForFirestore(settings));
+      return true;
+    } catch (err) {
+      console.error('[Database] Error saving email notification settings to Firestore:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync email notification settings to Supabase
+   */
+  public async syncEmailSettingsToSupabase(settings: EmailNotificationSettings): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'email_notifications_settings',
+          value: settings,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+
+      return true;
+    } catch (err) {
+      console.error('[Database] Exception saving email notification settings to Supabase:', err);
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync email delivery log to Firestore
+   */
+  public async syncEmailLogToFirestore(log: EmailLogEntry): Promise<boolean> {
+    try {
+      const fsDb = getFirestoreServer();
+      if (!fsDb) return false;
+      const logRef = doc(fsDb, 'email_logs', log.id);
+      await setDoc(logRef, sanitizeForFirestore(log));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Helper to sync email delivery log to Supabase
+   */
+  public async syncEmailLogToSupabase(log: EmailLogEntry): Promise<boolean> {
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) return false;
+
+      const recentLogs = this.emailLogs.slice(-100);
+      await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'email_logs',
+          value: { logs: recentLogs },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Initializes real-time synchronization with Supabase PostgreSQL.
    * If tables are empty, seeds with existing 193 rides.
    * If tables contain records, pulls them as authoritative source of truth.
@@ -885,6 +1019,31 @@ class RideDatabase {
         }
       } catch (err) {
         console.warn('[Database] Supabase admin emails fetch note:', err);
+      }
+
+      // 2.5. Fetch Email Notification Settings
+      try {
+        const { data: settingsData } = await supabase
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'email_notifications_settings')
+          .single();
+
+        if (settingsData?.value) {
+          const s = settingsData.value;
+          this.emailNotificationSettings = {
+            admin: s.admin !== undefined ? Boolean(s.admin) : true,
+            customer: s.customer !== undefined ? Boolean(s.customer) : true,
+            driver: s.driver !== undefined ? Boolean(s.driver) : true,
+            affiliate: s.affiliate !== undefined ? Boolean(s.affiliate) : true,
+            updatedAt: s.updatedAt || new Date().toISOString()
+          };
+          console.log('[Database] Synced Email Notification Settings from Supabase:', this.emailNotificationSettings);
+        } else {
+          await this.syncEmailSettingsToSupabase(this.emailNotificationSettings);
+        }
+      } catch (err) {
+        console.warn('[Database] Supabase email settings fetch note:', err);
       }
 
       // 3. Fetch Fleet Drivers (try 'drivers' table first, fallback to 'fleet_drivers')
@@ -1111,7 +1270,9 @@ class RideDatabase {
         affiliates: Array.from(this.affiliates.entries()),
         sessions: Array.from(this.sessions),
         adminEmails: this.adminEmails,
-        branding: this.branding
+        branding: this.branding,
+        emailNotificationSettings: this.emailNotificationSettings,
+        emailLogs: this.emailLogs.slice(-300)
       };
 
       const jsonString = JSON.stringify(serialized, null, 2);
@@ -1168,6 +1329,20 @@ class RideDatabase {
           this.adminEmails = parsed.adminEmails;
         } else {
           this.adminEmails = [process.env.ADMIN_EMAIL || 'hassanmehdi1444@gmail.com'];
+        }
+
+        if (parsed.emailNotificationSettings) {
+          this.emailNotificationSettings = {
+            admin: parsed.emailNotificationSettings.admin !== undefined ? Boolean(parsed.emailNotificationSettings.admin) : true,
+            customer: parsed.emailNotificationSettings.customer !== undefined ? Boolean(parsed.emailNotificationSettings.customer) : true,
+            driver: parsed.emailNotificationSettings.driver !== undefined ? Boolean(parsed.emailNotificationSettings.driver) : true,
+            affiliate: parsed.emailNotificationSettings.affiliate !== undefined ? Boolean(parsed.emailNotificationSettings.affiliate) : true,
+            updatedAt: parsed.emailNotificationSettings.updatedAt || new Date().toISOString()
+          };
+        }
+
+        if (Array.isArray(parsed.emailLogs)) {
+          this.emailLogs = parsed.emailLogs;
         }
 
         if (parsed.branding) {
@@ -1366,6 +1541,9 @@ class RideDatabase {
     rideTime?: string;
     affiliateName?: string;
     affiliateId?: string;
+    affiliateEmail?: string;
+    pickupLocation?: string;
+    dropoffLocation?: string;
   }): Promise<Ride> {
     if (!data.reservationId || !data.passengerName || !data.passengerEmail) {
       throw new Error('Reservation ID, Passenger Name, and Passenger Email are required to create a ride.');
@@ -1386,6 +1564,14 @@ class RideDatabase {
       if (d) {
         assignedDriverName = d.name;
         assignedDriverPhone = d.phone;
+      }
+    }
+
+    let resolvedAffiliateEmail = data.affiliateEmail ? data.affiliateEmail.trim().toLowerCase() : undefined;
+    if (!resolvedAffiliateEmail && data.affiliateId) {
+      const aff = this.affiliates.get(data.affiliateId);
+      if (aff && aff.email) {
+        resolvedAffiliateEmail = aff.email.trim().toLowerCase();
       }
     }
 
@@ -1415,8 +1601,11 @@ class RideDatabase {
       updatedAt: createdTime,
       rideDate: data.rideDate ? String(data.rideDate).trim() : undefined,
       rideTime: data.rideTime ? String(data.rideTime).trim() : undefined,
+      pickupLocation: data.pickupLocation ? String(data.pickupLocation).trim() : undefined,
+      dropoffLocation: data.dropoffLocation ? String(data.dropoffLocation).trim() : undefined,
       affiliateName: data.affiliateName ? String(data.affiliateName).trim() : undefined,
       affiliateId: data.affiliateId ? String(data.affiliateId).trim() : undefined,
+      affiliateEmail: resolvedAffiliateEmail,
       tokens: {
         driverToken,
         passengerToken,
@@ -2048,6 +2237,52 @@ class RideDatabase {
       this.syncBrandingToFirestore(this.branding)
     ]);
     return { ...this.branding };
+  }
+
+  // ==========================================
+  // EMAIL NOTIFICATION SETTINGS & AUDIT LOGS
+  // ==========================================
+  getEmailNotificationSettings(): EmailNotificationSettings {
+    return { ...this.emailNotificationSettings };
+  }
+
+  async updateEmailNotificationSettings(patch: Partial<EmailNotificationSettings>): Promise<EmailNotificationSettings> {
+    this.emailNotificationSettings = {
+      ...this.emailNotificationSettings,
+      admin: patch.admin !== undefined ? Boolean(patch.admin) : this.emailNotificationSettings.admin,
+      customer: patch.customer !== undefined ? Boolean(patch.customer) : this.emailNotificationSettings.customer,
+      driver: patch.driver !== undefined ? Boolean(patch.driver) : this.emailNotificationSettings.driver,
+      affiliate: patch.affiliate !== undefined ? Boolean(patch.affiliate) : this.emailNotificationSettings.affiliate,
+      updatedAt: new Date().toISOString()
+    };
+    this.persistToDisk();
+    await Promise.all([
+      this.syncEmailSettingsToSupabase(this.emailNotificationSettings),
+      this.syncEmailSettingsToFirestore(this.emailNotificationSettings)
+    ]);
+    return { ...this.emailNotificationSettings };
+  }
+
+  getEmailLogs(limit: number = 100): EmailLogEntry[] {
+    return this.emailLogs.slice(-limit).reverse();
+  }
+
+  addEmailLog(log: Omit<EmailLogEntry, 'id' | 'timestamp'>): EmailLogEntry {
+    const entry: EmailLogEntry = {
+      id: `elog_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+      timestamp: new Date().toISOString(),
+      ...log
+    };
+    this.emailLogs.push(entry);
+    if (this.emailLogs.length > 500) {
+      this.emailLogs = this.emailLogs.slice(-500);
+    }
+    this.persistToDisk();
+    Promise.all([
+      this.syncEmailLogToSupabase(entry),
+      this.syncEmailLogToFirestore(entry)
+    ]).catch(() => {});
+    return entry;
   }
 
   // Get Diagnostics & Persistence Status

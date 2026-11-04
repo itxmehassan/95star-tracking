@@ -77,15 +77,38 @@ export interface TrackingTokens {
 
 export interface EmailRecipientStatus {
   email: string;
-  role: 'driver' | 'passenger' | 'admin';
+  role: 'driver' | 'passenger' | 'customer' | 'admin' | 'affiliate';
   success: boolean;
+  status?: 'sent' | 'failed' | 'skipped';
+  messageId?: string;
   error?: string;
+  timestamp?: string;
 }
 
 export interface EmailDispatchRecord {
   sentAt: string;
   driverName?: string;
   recipients: EmailRecipientStatus[];
+}
+
+export interface EmailNotificationSettings {
+  admin: boolean;
+  customer: boolean;
+  driver: boolean;
+  affiliate: boolean;
+  updatedAt?: string;
+}
+
+export interface EmailLogEntry {
+  id: string;
+  rideId: string;
+  reservationId: string;
+  recipientType: 'admin' | 'customer' | 'driver' | 'affiliate';
+  recipientEmail: string;
+  status: 'sent' | 'failed' | 'skipped';
+  messageId?: string;
+  error?: string;
+  timestamp: string;
 }
 
 export interface Ride {
@@ -105,8 +128,11 @@ export interface Ride {
   events: RideStatusEvent[];
   rideDate?: string;
   rideTime?: string;
+  pickupLocation?: string;
+  dropoffLocation?: string;
   affiliateName?: string;
   affiliateId?: string;
+  affiliateEmail?: string;
   lastEmailDispatchedAt?: string;
   lastAssignedDriverIdForEmail?: string;
   emailDispatchStatus?: EmailDispatchRecord;

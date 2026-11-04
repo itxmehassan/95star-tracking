@@ -123,10 +123,11 @@ export default function Navbar({
               {onOpenAdminEmails && (
                 <button
                   onClick={onOpenAdminEmails}
-                  className="px-2.5 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-xl transition cursor-pointer"
-                  title="Configure Admin Emails"
+                  className="px-2.5 py-2 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 rounded-xl transition flex items-center gap-1 cursor-pointer"
+                  title="EMAIL NOTIFICATIONS & Settings"
                 >
-                  Admins
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Emails</span>
                 </button>
               )}
               {onOpenCompanyLogo && (
@@ -361,11 +362,11 @@ export default function Navbar({
                   setMobileMenuOpen(false);
                   onOpenAdminEmails();
                 }}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50"
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
               >
                 <div className="flex items-center gap-2.5">
                   <Mail className="w-4 h-4 text-emerald-600" />
-                  <span>Admin Emails & Test Dispatches</span>
+                  <span>EMAIL NOTIFICATIONS (Resend)</span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-400" />
               </button>

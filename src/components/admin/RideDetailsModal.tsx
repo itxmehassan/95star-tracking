@@ -340,15 +340,68 @@ export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenA
               </button>
             </form>
 
-            {/* Email Dispatch History Banner */}
-            {currentRide.lastEmailDispatchedAt && (
-              <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
-                <span className="flex items-center gap-1.5">
+            {/* Email Dispatch History & Status Card */}
+            <div className="pt-3 border-t border-slate-200/60 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                  <Mail className="w-3.5 h-3.5 text-slate-600" />
+                  <span>Transactional Email Dispatch Status</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSendEmailsManually}
+                  disabled={sendingEmails}
+                  className="px-2.5 py-1 text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  title="Manually dispatch tracking emails to active recipients"
+                >
+                  <Send className={`w-3 h-3 ${sendingEmails ? 'animate-spin' : ''}`} />
+                  <span>{sendingEmails ? 'Sending...' : 'Re-send Emails'}</span>
+                </button>
+              </div>
+
+              {currentRide.emailDispatchStatus ? (
+                <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>Dispatched: {formatDateTime(currentRide.emailDispatchStatus.sentAt)}</span>
+                    {currentRide.emailDispatchStatus.driverName && (
+                      <span>Driver: {currentRide.emailDispatchStatus.driverName}</span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {currentRide.emailDispatchStatus.recipients.map((rec, idx) => (
+                      <span
+                        key={idx}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium border ${
+                          rec.status === 'failed'
+                            ? 'bg-rose-50 border-rose-200 text-rose-700'
+                            : rec.status === 'skipped'
+                            ? 'bg-amber-50 border-amber-200 text-amber-700'
+                            : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        }`}
+                        title={rec.error ? `Error: ${rec.error}` : rec.email}
+                      >
+                        <span className="font-bold uppercase">{rec.role}:</span>
+                        <span className="max-w-[140px] truncate">{rec.email || 'None'}</span>
+                        <span className="uppercase font-bold text-[9px]">
+                          ({rec.status || 'sent'})
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : currentRide.lastEmailDispatchedAt ? (
+                <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Tracking links last dispatched on {formatDateTime(currentRide.lastEmailDispatchedAt)}</span>
-                </span>
-              </div>
-            )}
+                </div>
+              ) : (
+                <div className="text-[11px] text-slate-400 italic">
+                  No automated emails dispatched yet for this ride. Click Re-send to dispatch immediately.
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Status Timeline & Exact Timestamps */}
