@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, Mail, Plus, Trash2, Shield, Check, AlertCircle, 
   Send, Eye, Sparkles, CheckCircle2, RefreshCw, Bell, User, Car, Handshake,
-  CheckSquare, AlertTriangle, HelpCircle, Activity
+  CheckSquare, AlertTriangle, HelpCircle, Activity, Star
 } from 'lucide-react';
 import { 
   apiFetch, 
@@ -38,6 +38,7 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
   const [newEmail, setNewEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isPrimaryAdd, setIsPrimaryAdd] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // 3. Delivery Logs State
@@ -140,7 +141,26 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
     }
   };
 
-  const handleAddEmail = (e?: React.FormEvent) => {
+  const persistAdminEmails = async (newList: string[]) => {
+    try {
+      setSaving(true);
+      const res = await apiFetch<{ success: boolean; adminEmails: string[] }>('/api/admin/emails', {
+        method: 'POST',
+        body: JSON.stringify({ adminEmails: newList })
+      });
+      if (res && res.success && Array.isArray(res.adminEmails)) {
+        setAdminEmails(res.adminEmails);
+        setFeedback({ type: 'success', message: 'Admin email recipients saved and synced successfully.' });
+        setTimeout(() => setFeedback(null), 3000);
+      }
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to save admin emails to database.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddEmail = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const clean = newEmail.trim().toLowerCase();
     if (!clean) return;
@@ -155,14 +175,33 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
       return;
     }
 
-    setAdminEmails(prev => [...prev, clean]);
+    const updated = isPrimaryAdd ? [clean, ...adminEmails] : [...adminEmails, clean];
+    setAdminEmails(updated);
     setNewEmail('');
+    setIsPrimaryAdd(false);
     setFeedback(null);
+    await persistAdminEmails(updated);
   };
 
-  const handleRemoveEmail = (emailToRemove: string) => {
-    setAdminEmails(prev => prev.filter(e => e.toLowerCase() !== emailToRemove.toLowerCase()));
+  const handleRemoveEmail = async (emailToRemove: string) => {
+    const clean = emailToRemove.trim().toLowerCase();
+    const updated = adminEmails.filter(e => e.toLowerCase() !== clean);
+    if (updated.length === 0) {
+      setFeedback({ type: 'error', message: 'At least one admin email recipient is required.' });
+      return;
+    }
+    setAdminEmails(updated);
     setFeedback(null);
+    await persistAdminEmails(updated);
+  };
+
+  const handleSetPrimary = async (primaryEmail: string) => {
+    const clean = primaryEmail.trim().toLowerCase();
+    const rest = adminEmails.filter(e => e.toLowerCase() !== clean);
+    const updated = [clean, ...rest];
+    setAdminEmails(updated);
+    setFeedback(null);
+    await persistAdminEmails(updated);
   };
 
   const handleSaveRecipients = async () => {
@@ -170,25 +209,7 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
       setFeedback({ type: 'error', message: 'At least one admin email recipient is required.' });
       return;
     }
-
-    setSaving(true);
-    setFeedback(null);
-
-    try {
-      const res = await apiFetch<{ success: boolean; adminEmails: string[] }>('/api/admin/emails', {
-        method: 'POST',
-        body: JSON.stringify({ adminEmails })
-      });
-
-      if (res.success) {
-        setAdminEmails(res.adminEmails);
-        setFeedback({ type: 'success', message: 'Admin email recipients saved successfully.' });
-      }
-    } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Failed to save admin emails' });
-    } finally {
-      setSaving(false);
-    }
+    await persistAdminEmails(adminEmails);
   };
 
   const handleSendTestEmail = async () => {
@@ -602,7 +623,7 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
                       type="email"
                       value={newEmail}
                       onChange={(e) => setNewEmail(e.target.value)}
-                      placeholder="e.g. dispatch@95star.com"
+                      placeholder="e.g. tachyonlimo@gmail.com"
                       className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
                     />
                   </div>
@@ -614,6 +635,17 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
                     <Plus className="w-3.5 h-3.5" />
                     <span>Add Email</span>
                   </button>
+                </div>
+                <div className="flex items-center gap-2 pt-0.5">
+                  <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isPrimaryAdd}
+                      onChange={(e) => setIsPrimaryAdd(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
+                    />
+                    <span className="font-medium">Set as Primary Admin (replaces current primary)</span>
+                  </label>
                 </div>
               </form>
 
@@ -642,15 +674,16 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
                     {adminEmails.map((email, index) => (
                       <div key={email} className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-slate-50/60 transition">
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-6 h-6 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center text-[11px] font-bold shrink-0">
-                            {index + 1}
+                          <div className={`w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold shrink-0 ${index === 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}`}>
+                            {index === 0 ? '★' : index + 1}
                           </div>
                           <div className="min-w-0">
                             <span className="text-xs font-semibold text-slate-900 block truncate">
                               {email}
                             </span>
                             {index === 0 && (
-                              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium inline-block mt-0.5">
+                              <span className="text-[10px] text-amber-800 bg-amber-50 border border-amber-200/70 px-1.5 py-0.5 rounded font-semibold inline-flex items-center gap-1 mt-0.5">
+                                <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
                                 Primary Admin
                               </span>
                             )}
@@ -658,6 +691,17 @@ export default function AdminEmailsModal({ onClose, defaultTab = 'notifications'
                         </div>
 
                         <div className="flex items-center gap-2">
+                          {index > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleSetPrimary(email)}
+                              className="text-[11px] text-amber-700 hover:text-amber-900 hover:bg-amber-50 px-2 py-1 rounded-md border border-amber-200 font-medium flex items-center gap-1 transition cursor-pointer"
+                              title={`Set ${email} as Primary Admin`}
+                            >
+                              <Star className="w-3 h-3" />
+                              <span>Make Primary</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {

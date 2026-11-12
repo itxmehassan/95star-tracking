@@ -9,10 +9,12 @@ export function buildRideTimelineTableData(ride: Ride): string[][] {
   const tableData: string[][] = [];
 
   // Row 1: Authoritative Creation Record
+  const createdEvt = (ride.events || []).find(e => e.status === 'created');
+  const creationTime = createdEvt?.startedAt || ride.createdAt;
   tableData.push([
     '1',
     'Created (Initial Record)',
-    formatDateTime(ride.createdAt),
+    formatDateTime(creationTime),
     'Initial Record Created'
   ]);
 

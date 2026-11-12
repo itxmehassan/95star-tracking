@@ -40,7 +40,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   };
 
   const handleFillDemo = () => {
-    setEmail('hassanmehdi1444@gmail.com');
+    setEmail('tachyonlimo@gmail.com');
     setPassword('AMAFHHas786');
     setError(null);
   };
@@ -82,7 +82,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="hassanmehdi1444@gmail.com"
+                  placeholder="tachyonlimo@gmail.com"
                   className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-900 transition"
                 />
               </div>

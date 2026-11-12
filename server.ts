@@ -7,7 +7,7 @@ import { db, STATUS_SEQUENCE, STATUS_LABELS, RideStatus } from './server/db';
 import { realtime } from './server/realtime';
 import { dispatchRideTrackingEmails, sendTestEmail, getEmailServiceStatus } from './server/email';
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'hassanmehdi1444@gmail.com';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'tachyonlimo@gmail.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'AMAFHHas786';
 
 function getBaseUrl(req: Request): string {
@@ -129,13 +129,18 @@ async function startServer() {
     const cleanEmail = String(email).trim().toLowerCase();
     const cleanPassword = String(password).trim();
 
-    if (cleanEmail === ADMIN_EMAIL.toLowerCase() && cleanPassword === ADMIN_PASSWORD) {
+    const configuredAdmins = db.getAdminEmails().map(e => e.trim().toLowerCase());
+    const isAuthorizedEmail = 
+      cleanEmail === ADMIN_EMAIL.toLowerCase() || 
+      configuredAdmins.includes(cleanEmail);
+
+    if (isAuthorizedEmail && cleanPassword === ADMIN_PASSWORD) {
       const sessionToken = db.createSession();
       return res.json({
         success: true,
         token: sessionToken,
         user: {
-          email: ADMIN_EMAIL,
+          email: cleanEmail,
           name: 'Operations Administrator'
         }
       });
@@ -301,6 +306,55 @@ async function startServer() {
     }
 
     const result = await db.updateRideStatus(token, status, comment);
+
+    if (!result.success || !result.ride) {
+      return res.status(400).json({ error: result.error || 'Failed to update status.' });
+    }
+
+    // Broadcast instant update to all active tracking pages (Passenger, Admin, Driver, Dashboard)
+    realtime.broadcastRideUpdate(result.ride);
+
+    res.json({
+      success: true,
+      ride: result.ride
+    });
+  });
+
+  // ADMIN DIRECT STATUS PROGRESSION / OVERRIDE
+  app.post('/api/rides/:id/status', requireAdminAuth, async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { status, comment } = req.body as { status: RideStatus; comment?: string };
+
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required.' });
+    }
+
+    const adminEmail = (req as any).adminEmail || 'Admin';
+    const result = await db.updateRideStatusByRideId(id, status, comment, adminEmail);
+
+    if (!result.success || !result.ride) {
+      return res.status(400).json({ error: result.error || 'Failed to update status.' });
+    }
+
+    // Broadcast instant update to all active tracking pages (Passenger, Admin, Driver, Dashboard)
+    realtime.broadcastRideUpdate(result.ride);
+
+    res.json({
+      success: true,
+      ride: result.ride
+    });
+  });
+
+  app.put('/api/rides/:id/status', requireAdminAuth, async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { status, comment } = req.body as { status: RideStatus; comment?: string };
+
+    if (!status) {
+      return res.status(400).json({ error: 'Status is required.' });
+    }
+
+    const adminEmail = (req as any).adminEmail || 'Admin';
+    const result = await db.updateRideStatusByRideId(id, status, comment, adminEmail);
 
     if (!result.success || !result.ride) {
       return res.status(400).json({ error: result.error || 'Failed to update status.' });

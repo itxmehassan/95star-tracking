@@ -130,6 +130,20 @@ export async function deleteDriver(id: string): Promise<{ success: boolean }> {
   });
 }
 
+export async function updateRideStatusApi(token: string, status: string, comment?: string): Promise<{ success: boolean; ride: Ride }> {
+  return apiFetch<{ success: boolean; ride: Ride }>(`/api/track/${token}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status, comment })
+  });
+}
+
+export async function updateAdminRideStatus(rideId: string, status: string, comment?: string): Promise<{ success: boolean; ride: Ride }> {
+  return apiFetch<{ success: boolean; ride: Ride }>(`/api/rides/${rideId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status, comment })
+  });
+}
+
 export async function assignDriver(rideId: string, driverId?: string, driverName?: string, driverPhone?: string): Promise<{ success: boolean; ride: Ride }> {
   return apiFetch<{ success: boolean; ride: Ride }>(`/api/rides/${rideId}/driver`, {
     method: 'POST',
