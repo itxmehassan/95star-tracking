@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, Download, RefreshCw, Smartphone, Users, Shield, 
   Clock, CheckCircle2, Circle, Copy, Check, ExternalLink, Calendar, User, UserPlus, Car, Phone, Mail, Plus, Send, MessageSquare, Trash2,
@@ -19,6 +19,10 @@ interface RideDetailsModalProps {
 
 export default function RideDetailsModal({ ride, onClose, onRideUpdated, onOpenAssignDriver, onDeleteRide }: RideDetailsModalProps) {
   const [currentRide, setCurrentRide] = useState<Ride>(ride);
+
+  useEffect(() => {
+    setCurrentRide(ride);
+  }, [ride]);
   const [regenerating, setRegenerating] = useState<string | null>(null);
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);

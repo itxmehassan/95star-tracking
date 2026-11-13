@@ -198,6 +198,8 @@ class RideDatabase {
   private isSyncing = false;
   private lastFirestoreSync: string | null = null;
   private lastSupabaseSync: string | null = null;
+  private supabaseEventTable: 'ride_status_events' | 'ride_events' | null = null;
+  private supabaseEventExtendedCols = true;
 
   constructor() {
     this.ensureDataDirectory();
@@ -351,23 +353,36 @@ class RideDatabase {
                 }
               }
               // Register events
-              if (Array.isArray(r.events)) {
-                for (const evt of r.events) {
-                  if (evt && evt.id) {
-                    this.events.set(evt.id, evt);
-                  }
-                }
-              }
               const existingRide = this.rides.get(r.id);
-              if (existingRide?.events) {
-                for (const evt of existingRide.events) {
-                  if (evt && evt.id) {
-                    this.events.set(evt.id, evt);
-                  }
+              const mergedEvents = this.mergeEventLists(existingRide?.events, r.events);
+              for (const evt of mergedEvents) {
+                if (evt && evt.id) {
+                  this.events.set(evt.id, evt);
                 }
               }
-              this.ensureRideEvents(r);
-              this.rides.set(r.id, r);
+
+              if (existingRide) {
+                const existingRank = this.statusProgressRank(existingRide.currentStatus);
+                const fsRank = this.statusProgressRank(r.currentStatus);
+                const existingTime = new Date(existingRide.updatedAt || existingRide.createdAt).getTime() || 0;
+                const fsTime = new Date(r.updatedAt || r.createdAt).getTime() || 0;
+                const useFsScalars = fsRank > existingRank || (fsRank === existingRank && fsTime > existingTime);
+
+                const consolidated: Ride = {
+                  ...(useFsScalars ? existingRide : r),
+                  ...(useFsScalars ? r : existingRide),
+                  currentStatus: fsRank > existingRank ? r.currentStatus : existingRide.currentStatus,
+                  completedAt: existingRide.completedAt || r.completedAt,
+                  updatedAt: fsTime > existingTime ? r.updatedAt : existingRide.updatedAt,
+                  events: mergedEvents
+                };
+                this.ensureRideEvents(consolidated);
+                this.rides.set(r.id, consolidated);
+              } else {
+                r.events = mergedEvents;
+                this.ensureRideEvents(r);
+                this.rides.set(r.id, r);
+              }
             }
           }
           console.log(`[Database] Synced ${ridesSnap.size} permanent rides from Firestore.`);
@@ -566,29 +581,9 @@ class RideDatabase {
         return false;
       }
 
-      // Also persist all status events for this ride into Supabase ride_status_events table
+      // Also persist all status events for this ride into Supabase event audit table
       if (Array.isArray(ride.events) && ride.events.length > 0) {
-        const eventRows = ride.events.map(e => ({
-          id: e.id,
-          ride_id: e.rideId || ride.id,
-          reservation_id: e.reservationId || ride.reservationId,
-          status: e.status,
-          started_at: e.startedAt,
-          ended_at: e.endedAt || null,
-          duration_seconds: e.durationSeconds !== undefined ? e.durationSeconds : null,
-          comment: e.comment || null,
-          driver_id: e.driverId || null,
-          driver_name: e.driverName || null,
-          created_at: e.createdAt || e.startedAt || new Date().toISOString()
-        }));
-        try {
-          let eventRes = await supabase.from('ride_status_events').upsert(eventRows, { onConflict: 'id' });
-          if (eventRes.error && (eventRes.error.message.includes('relation') || eventRes.error.message.includes('does not exist') || eventRes.error.message.includes('Could not find the table'))) {
-            await supabase.from('ride_events').upsert(eventRows, { onConflict: 'id' });
-          }
-        } catch (eventErr) {
-          console.warn('[Database] Background event sync note:', eventErr);
-        }
+        await this.upsertEventsToSupabase(ride.events, ride);
       }
 
       return true;
@@ -599,39 +594,81 @@ class RideDatabase {
   }
 
   /**
-   * Helper to sync a single event to Supabase ride_status_events table (with fallback to ride_events)
+   * Upserts one or more RideStatusEvent rows to Supabase (supporting both ride_status_events
+   * and ride_events tables, as well as core 8-column schema without optional comment/driver columns).
    */
-  public async syncEventToSupabase(event: RideStatusEvent): Promise<boolean> {
+  private async upsertEventsToSupabase(events: RideStatusEvent[], parentRide?: Ride): Promise<boolean> {
     try {
       const supabase = getSupabaseClient();
-      if (!supabase) return false;
-      const row = {
-        id: event.id,
-        ride_id: event.rideId,
-        reservation_id: event.reservationId,
-        status: event.status,
-        started_at: event.startedAt,
-        ended_at: event.endedAt || null,
-        duration_seconds: event.durationSeconds !== undefined ? event.durationSeconds : null,
-        comment: event.comment || null,
-        driver_id: event.driverId || null,
-        driver_name: event.driverName || null,
-        created_at: event.createdAt || event.startedAt || new Date().toISOString()
+      if (!supabase || !Array.isArray(events) || events.length === 0) return false;
+
+      const buildRows = (includeExtended: boolean) =>
+        events.map(e => {
+          const base: Record<string, any> = {
+            id: e.id,
+            ride_id: e.rideId || parentRide?.id,
+            reservation_id: e.reservationId || parentRide?.reservationId,
+            status: e.status,
+            started_at: e.startedAt,
+            ended_at: e.endedAt || null,
+            duration_seconds: e.durationSeconds !== undefined ? e.durationSeconds : null,
+            created_at: e.createdAt || e.startedAt || new Date().toISOString()
+          };
+          if (includeExtended) {
+            base.comment = e.comment || null;
+            base.driver_id = e.driverId || null;
+            base.driver_name = e.driverName || null;
+          }
+          return base;
+        });
+
+      const isMissingTableErr = (msg?: string) =>
+        Boolean(msg && (msg.includes('relation') || msg.includes('does not exist') || msg.includes('Could not find the table')));
+
+      const isMissingColumnErr = (msg?: string) =>
+        Boolean(msg && (msg.includes('schema cache') || msg.includes('column') || msg.includes('comment') || msg.includes('driver_id') || msg.includes('driver_name')));
+
+      const tryTable = async (tableName: 'ride_status_events' | 'ride_events') => {
+        let res = await supabase.from(tableName).upsert(buildRows(this.supabaseEventExtendedCols), { onConflict: 'id' });
+        if (res.error && this.supabaseEventExtendedCols && !isMissingTableErr(res.error.message) && isMissingColumnErr(res.error.message)) {
+          this.supabaseEventExtendedCols = false;
+          res = await supabase.from(tableName).upsert(buildRows(false), { onConflict: 'id' });
+        }
+        return res;
       };
-      let { error } = await supabase.from('ride_status_events').upsert(row, { onConflict: 'id' });
-      if (error && (error.message.includes('relation') || error.message.includes('does not exist') || error.message.includes('Could not find the table'))) {
-        const fallback = await supabase.from('ride_events').upsert(row, { onConflict: 'id' });
-        error = fallback.error;
+
+      const tablesToTry: ('ride_status_events' | 'ride_events')[] = this.supabaseEventTable
+        ? [this.supabaseEventTable]
+        : ['ride_status_events', 'ride_events'];
+
+      let lastErr: any = null;
+      for (const table of tablesToTry) {
+        const res = await tryTable(table);
+        if (!res.error) {
+          this.supabaseEventTable = table;
+          return true;
+        }
+        lastErr = res.error;
+        if (!isMissingTableErr(res.error.message)) {
+          break;
+        }
       }
-      if (error) {
-        console.warn(`[Database] Error saving event ${event.id} to Supabase:`, error.message);
-        return false;
+
+      if (lastErr) {
+        console.error(`[Database] Error upserting ${events.length} event(s) to Supabase:`, lastErr.message);
       }
-      return true;
+      return false;
     } catch (err) {
-      console.warn(`[Database] Exception saving event ${event.id} to Supabase:`, err);
+      console.error('[Database] Exception upserting events to Supabase:', err);
       return false;
     }
+  }
+
+  /**
+   * Helper to sync a single event to Supabase ride_status_events / ride_events table
+   */
+  public async syncEventToSupabase(event: RideStatusEvent): Promise<boolean> {
+    return this.upsertEventsToSupabase([event]);
   }
 
   /**
@@ -1071,11 +1108,11 @@ class RideDatabase {
       // 3. Fetch Fleet Drivers (try 'drivers' table first, fallback to 'fleet_drivers')
       try {
         let driversData: any[] | null = null;
-        const resDrivers = await supabase.from('drivers').select('*');
+        const resDrivers = await this.fetchAllSupabaseRows(supabase, 'drivers');
         if (!resDrivers.error && Array.isArray(resDrivers.data)) {
           driversData = resDrivers.data;
         } else {
-          const resFleet = await supabase.from('fleet_drivers').select('*');
+          const resFleet = await this.fetchAllSupabaseRows(supabase, 'fleet_drivers');
           if (!resFleet.error && Array.isArray(resFleet.data)) {
             driversData = resFleet.data;
           }
@@ -1112,7 +1149,7 @@ class RideDatabase {
       // 3.5. Fetch Affiliates
       try {
         let affiliatesData: any[] | null = null;
-        const resAff = await supabase.from('affiliates').select('*');
+        const resAff = await this.fetchAllSupabaseRows(supabase, 'affiliates');
         if (!resAff.error && Array.isArray(resAff.data)) {
           affiliatesData = resAff.data;
         } else {
@@ -1142,13 +1179,13 @@ class RideDatabase {
         console.warn('[Database] Supabase affiliates fetch note:', err);
       }
 
-      // 4. Fetch Rides & Associated Status Events
+      // 4. Fetch Rides & Associated Status Events (paginated beyond PostgREST 1000-row default limit)
       try {
-        let eventsRes = await supabase.from('ride_status_events').select('*').order('started_at', { ascending: true });
+        let eventsRes = await this.fetchAllSupabaseRows(supabase, 'ride_status_events', { column: 'started_at', ascending: true });
         if (eventsRes.error && (eventsRes.error.message.includes('relation') || eventsRes.error.message.includes('does not exist') || eventsRes.error.message.includes('Could not find the table'))) {
-          eventsRes = await supabase.from('ride_events').select('*').order('started_at', { ascending: true });
+          eventsRes = await this.fetchAllSupabaseRows(supabase, 'ride_events', { column: 'started_at', ascending: true });
         }
-        const ridesRes = await supabase.from('rides').select('*').order('created_at', { ascending: false });
+        const ridesRes = await this.fetchAllSupabaseRows(supabase, 'rides', { column: 'created_at', ascending: false });
 
         const ridesData = ridesRes.data;
         const ridesErr = ridesRes.error;
@@ -1192,51 +1229,51 @@ class RideDatabase {
           for (const row of ridesData) {
             const existingRide = this.rides.get(row.id);
             const supabaseEvents = eventsByRideId.get(row.id) || eventsByRideId.get(row.reservation_id) || [];
-            
-            // Collect events: merge supabaseEvents, existingRide?.events, row.events, and matching events from this.events
-            const eventMap = new Map<string, RideStatusEvent>();
+
+            const matchingInMemoryEvents: RideStatusEvent[] = [];
             for (const evt of this.events.values()) {
               if (evt && (evt.rideId === row.id || (row.reservation_id && evt.reservationId === row.reservation_id))) {
-                eventMap.set(evt.status || evt.id, evt);
+                matchingInMemoryEvents.push(evt);
               }
             }
-            if (existingRide?.events) {
-              for (const evt of existingRide.events) {
-                if (evt) eventMap.set(evt.status || evt.id, evt);
-              }
-            }
-            if (Array.isArray(row.events)) {
-              for (const evt of row.events) {
-                if (evt) eventMap.set(evt.status || evt.id, evt);
-              }
-            }
-            for (const evt of supabaseEvents) {
-              if (evt) eventMap.set(evt.status || evt.id, evt);
-            }
-            const finalEvents = Array.from(eventMap.values()).sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+            const finalEvents = this.mergeEventLists(
+              matchingInMemoryEvents,
+              existingRide?.events,
+              Array.isArray(row.events) ? row.events : undefined,
+              supabaseEvents
+            );
+
+            const spRank = this.statusProgressRank(row.current_status as RideStatus);
+            const exRank = existingRide ? this.statusProgressRank(existingRide.currentStatus) : -1;
+            const resolvedStatus = exRank > spRank ? existingRide!.currentStatus : (row.current_status as RideStatus);
+            const spUpdated = new Date(row.updated_at || row.created_at).getTime() || 0;
+            const exUpdated = existingRide ? (new Date(existingRide.updatedAt || existingRide.createdAt).getTime() || 0) : 0;
 
             const r: Ride = {
               id: row.id,
               reservationId: row.reservation_id,
               passengerName: row.passenger_name,
               passengerEmail: row.passenger_email,
-              additionalPassengerEmails: row.additional_passenger_emails || [],
-              driverId: row.driver_id || undefined,
-              driverName: row.driver_name || undefined,
-              driverPhone: row.driver_phone || undefined,
-              currentStatus: row.current_status as RideStatus,
+              additionalPassengerEmails: row.additional_passenger_emails || existingRide?.additionalPassengerEmails || [],
+              driverId: row.driver_id || existingRide?.driverId || undefined,
+              driverName: row.driver_name || existingRide?.driverName || undefined,
+              driverPhone: row.driver_phone || existingRide?.driverPhone || undefined,
+              currentStatus: resolvedStatus,
               createdAt: row.created_at,
               completedAt: row.completed_at || existingRide?.completedAt || undefined,
-              updatedAt: row.updated_at || row.created_at,
-              tokens: row.tokens || {},
+              updatedAt: exUpdated > spUpdated ? existingRide!.updatedAt : (row.updated_at || row.created_at),
+              tokens: row.tokens || existingRide?.tokens || {},
               events: finalEvents,
               rideDate: existingRide?.rideDate,
               rideTime: existingRide?.rideTime,
+              pickupLocation: existingRide?.pickupLocation,
+              dropoffLocation: existingRide?.dropoffLocation,
               affiliateName: existingRide?.affiliateName,
               affiliateId: existingRide?.affiliateId,
-              lastEmailDispatchedAt: row.last_email_dispatched_at || undefined,
-              lastAssignedDriverIdForEmail: row.last_assigned_driver_id_for_email || undefined,
-              emailDispatchStatus: row.email_dispatch_status || undefined
+              affiliateEmail: existingRide?.affiliateEmail,
+              lastEmailDispatchedAt: row.last_email_dispatched_at || existingRide?.lastEmailDispatchedAt || undefined,
+              lastAssignedDriverIdForEmail: row.last_assigned_driver_id_for_email || existingRide?.lastAssignedDriverIdForEmail || undefined,
+              emailDispatchStatus: row.email_dispatch_status || existingRide?.emailDispatchStatus || undefined
             };
 
             this.rides.set(r.id, r);
@@ -1665,10 +1702,9 @@ class RideDatabase {
     // Persist to local mirror
     this.persistToDisk();
 
-    // Persist to Supabase PostgreSQL & Cloud Firestore
+    // Persist to Supabase PostgreSQL (ride row first to satisfy foreign key on ride_status_events) & Cloud Firestore
     await Promise.all([
       this.syncRideToSupabase(ride),
-      this.syncEventToSupabase(initialEvent),
       this.syncRideToFirestore(ride)
     ]);
 
@@ -1956,36 +1992,103 @@ class RideDatabase {
     return deleted;
   }
 
+  private async fetchAllSupabaseRows(
+    supabase: any,
+    tableName: string,
+    orderBy?: { column: string; ascending: boolean }
+  ): Promise<{ data: any[] | null; error: any }> {
+    const pageSize = 1000;
+    const allRows: any[] = [];
+    let from = 0;
+
+    while (true) {
+      let query = supabase.from(tableName).select('*');
+      if (orderBy) {
+        query = query.order(orderBy.column, { ascending: orderBy.ascending });
+      }
+      query = query.range(from, from + pageSize - 1);
+
+      const { data, error } = await query;
+      if (error) {
+        return { data: allRows.length > 0 ? allRows : null, error };
+      }
+      if (!Array.isArray(data) || data.length === 0) {
+        break;
+      }
+      allRows.push(...data);
+      if (data.length < pageSize) {
+        break;
+      }
+      from += pageSize;
+    }
+
+    return { data: allRows, error: null };
+  }
+
+  private statusProgressRank(status?: RideStatus): number {
+    if (!status || status === 'created') return 0;
+    const idx = STATUS_SEQUENCE.indexOf(status);
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  private mergeEventLists(...lists: (RideStatusEvent[] | undefined)[]): RideStatusEvent[] {
+    const eventMap = new Map<string, RideStatusEvent>();
+
+    for (const list of lists) {
+      if (!Array.isArray(list)) continue;
+      for (const evt of list) {
+        if (!evt || !evt.startedAt) continue;
+        const key = evt.status || evt.id;
+        const existing = eventMap.get(key);
+        if (!existing) {
+          eventMap.set(key, { ...evt });
+        } else {
+          // Prefer whichever record is richer (has endedAt / durationSeconds / comment), without losing startedAt
+          const merged: RideStatusEvent = {
+            ...existing,
+            ...evt,
+            id: existing.id || evt.id,
+            startedAt: existing.startedAt || evt.startedAt,
+            endedAt: evt.endedAt || existing.endedAt,
+            durationSeconds: evt.durationSeconds !== undefined ? evt.durationSeconds : existing.durationSeconds,
+            comment: evt.comment || existing.comment,
+            driverId: evt.driverId || existing.driverId,
+            driverName: evt.driverName || existing.driverName,
+            createdAt: existing.createdAt || evt.createdAt
+          };
+          eventMap.set(key, merged);
+        }
+      }
+    }
+
+    return Array.from(eventMap.values()).sort((a, b) => {
+      const timeDiff = (new Date(a.startedAt).getTime() || 0) - (new Date(b.startedAt).getTime() || 0);
+      if (timeDiff !== 0) return timeDiff;
+      return this.statusProgressRank(a.status) - this.statusProgressRank(b.status);
+    });
+  }
+
   /**
    * Authoritative helper to ensure a ride has its complete status transition events populated,
    * chronologically sorted, and synchronized with the in-memory audit log.
    */
   public ensureRideEvents(ride: Ride): Ride {
     if (!ride) return ride;
-    const eventMap = new Map<string, RideStatusEvent>();
-    
-    // First, populate from this.events (authoritative audit log)
+
+    const matchingInMemory: RideStatusEvent[] = [];
     for (const evt of this.events.values()) {
       if (evt && (evt.rideId === ride.id || (ride.reservationId && evt.reservationId === ride.reservationId))) {
-        eventMap.set(evt.status || evt.id, evt);
+        matchingInMemory.push(evt);
       }
     }
 
-    // Then include any existing ride.events
-    if (Array.isArray(ride.events)) {
-      for (const evt of ride.events) {
-        if (evt) {
-          const key = evt.status || evt.id;
-          if (!eventMap.has(key)) {
-            eventMap.set(key, evt);
-            if (evt.id) this.events.set(evt.id, evt);
-          }
-        }
+    ride.events = this.mergeEventLists(matchingInMemory, ride.events);
+    for (const evt of ride.events) {
+      if (evt && evt.id) {
+        this.events.set(evt.id, evt);
       }
     }
 
-    ride.events = Array.from(eventMap.values()).sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
-    
     if (ride.currentStatus === 'done' && !ride.completedAt) {
       const doneEvt = ride.events.find(e => e.status === 'done');
       if (doneEvt?.startedAt) {
@@ -2112,7 +2215,12 @@ class RideDatabase {
       const existingStageEvent = (ride.events || []).find(e => e.status === newStatus);
       if (existingStageEvent && cleanComment && cleanComment !== existingStageEvent.comment) {
         existingStageEvent.comment = cleanComment;
+        this.events.set(existingStageEvent.id, existingStageEvent);
         this.persistToDisk();
+        await Promise.all([
+          this.syncRideToSupabase(ride),
+          this.syncRideToFirestore(ride)
+        ]);
       }
       return { success: true, ride: this.ensureRideEvents(ride) };
     }
@@ -2148,6 +2256,9 @@ class RideDatabase {
         lastEvent.endedAt = now;
         const durationSec = Math.round((new Date(now).getTime() - new Date(lastEvent.startedAt).getTime()) / 1000);
         lastEvent.durationSeconds = Math.max(0, durationSec);
+        if (lastEvent.id) {
+          this.events.set(lastEvent.id, lastEvent);
+        }
       }
     }
 
@@ -2179,7 +2290,6 @@ class RideDatabase {
     this.persistToDisk();
     await Promise.all([
       this.syncRideToSupabase(ride),
-      this.syncEventToSupabase(newEvent),
       this.syncRideToFirestore(ride)
     ]);
     return { success: true, ride: this.ensureRideEvents(ride) };
@@ -2204,7 +2314,12 @@ class RideDatabase {
       const existingStageEvent = (ride.events || []).find(e => e.status === newStatus);
       if (existingStageEvent && cleanComment && cleanComment !== existingStageEvent.comment) {
         existingStageEvent.comment = cleanComment;
+        this.events.set(existingStageEvent.id, existingStageEvent);
         this.persistToDisk();
+        await Promise.all([
+          this.syncRideToSupabase(ride),
+          this.syncRideToFirestore(ride)
+        ]);
       }
       return { success: true, ride: this.ensureRideEvents(ride) };
     }
@@ -2238,6 +2353,9 @@ class RideDatabase {
         lastEvent.endedAt = now;
         const durationSec = Math.round((new Date(now).getTime() - new Date(lastEvent.startedAt).getTime()) / 1000);
         lastEvent.durationSeconds = Math.max(0, durationSec);
+        if (lastEvent.id) {
+          this.events.set(lastEvent.id, lastEvent);
+        }
       }
     }
 
@@ -2269,7 +2387,6 @@ class RideDatabase {
     this.persistToDisk();
     await Promise.all([
       this.syncRideToSupabase(ride),
-      this.syncEventToSupabase(newEvent),
       this.syncRideToFirestore(ride)
     ]);
     return { success: true, ride: this.ensureRideEvents(ride) };
@@ -2521,6 +2638,7 @@ class RideDatabase {
         if (r && r.id && r.reservationId) {
           const existing = this.rides.get(r.id);
           if (!existing) {
+            this.ensureRideEvents(r);
             this.rides.set(r.id, r);
             await Promise.all([
               this.syncRideToSupabase(r),
@@ -2529,10 +2647,26 @@ class RideDatabase {
             restoredCount++;
             console.log(`[Ride-Diagnostics][Database] Restored missing ride from client vault: #${r.reservationId} (ID: ${r.id})`);
           } else {
-            const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime();
-            const payloadTime = new Date(r.updatedAt || r.createdAt).getTime();
-            if (payloadTime >= existingTime) {
-              const merged = { ...existing, ...r };
+            const existingTime = new Date(existing.updatedAt || existing.createdAt).getTime() || 0;
+            const payloadTime = new Date(r.updatedAt || r.createdAt).getTime() || 0;
+            const existingRank = this.statusProgressRank(existing.currentStatus);
+            const payloadRank = this.statusProgressRank(r.currentStatus);
+
+            const mergedEvents = this.mergeEventLists(existing.events, r.events);
+            const gainedEvents = mergedEvents.length > (existing.events || []).length;
+            const statusAdvanced = payloadRank > existingRank;
+
+            if (gainedEvents || statusAdvanced || payloadTime > existingTime) {
+              const usePayloadScalars = statusAdvanced || (payloadRank === existingRank && payloadTime > existingTime);
+              const merged: Ride = {
+                ...(usePayloadScalars ? existing : r),
+                ...(usePayloadScalars ? r : existing),
+                currentStatus: statusAdvanced ? r.currentStatus : existing.currentStatus,
+                completedAt: existing.completedAt || r.completedAt,
+                updatedAt: payloadTime > existingTime ? r.updatedAt : existing.updatedAt,
+                events: mergedEvents
+              };
+              this.ensureRideEvents(merged);
               this.rides.set(r.id, merged);
               await Promise.all([
                 this.syncRideToSupabase(merged),
@@ -2570,7 +2704,7 @@ class RideDatabase {
 
           if (Array.isArray(r.events)) {
             for (const evt of r.events) {
-              if (evt && evt.id) {
+              if (evt && evt.id && !this.events.has(evt.id)) {
                 this.events.set(evt.id, evt);
               }
             }

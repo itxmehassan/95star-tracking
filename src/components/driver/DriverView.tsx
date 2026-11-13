@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   CheckCircle2, Circle, Car, ShieldCheck, 
   ArrowRight, AlertCircle, RefreshCw, Check, Clock, User, MessageSquare, X
@@ -21,22 +21,28 @@ export default function DriverView({ token }: DriverViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [showCommentModal, setShowCommentModal] = useState(false);
   const [driverComment, setDriverComment] = useState('');
+  const loadSeqRef = useRef(0);
 
   const { lastUpdate, connectionStatus } = useRealtimeRideStream({ token });
 
   const loadDriverData = async () => {
+    const seq = ++loadSeqRef.current;
     try {
       setLoading(true);
       setError(null);
       const res = await apiFetch(`/api/track/${token}`);
+      if (seq !== loadSeqRef.current) return;
       if (res.role !== 'driver') {
         throw new Error('This tracking link is not configured for driver access.');
       }
       setData(res);
     } catch (err: any) {
+      if (seq !== loadSeqRef.current) return;
       setError(err.message || 'Invalid driver tracking link.');
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
   };
 

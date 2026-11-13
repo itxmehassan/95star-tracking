@@ -70,9 +70,7 @@ export default function App() {
       const res = await apiFetch<{ authenticated: boolean }>('/api/auth/me');
       setIsAuthenticated(res.authenticated);
       if (res.authenticated) {
-        // Run sync/hydration first if local store has saved items
-        await ClientStorage.syncWithServer();
-        fetchAdminData();
+        await fetchAdminData();
       }
     } catch {
       setIsAuthenticated(false);
@@ -93,6 +91,9 @@ export default function App() {
       const { merged, missingCount } = ClientStorage.mergeRides(ridesRes);
 
       setRides(merged);
+      setSelectedRideDetails(prev => prev ? (merged.find(r => r.id === prev.id) || prev) : null);
+      setAssignDriverRide(prev => prev ? (merged.find(r => r.id === prev.id) || prev) : null);
+      setGeneratedLinksRide(prev => prev ? (merged.find(r => r.id === prev.id) || prev) : null);
 
       // If local storage has rides that the server is missing (e.g. server restarted or container reset):
       // Automatically re-hydrate the server with the missing rides immediately!
